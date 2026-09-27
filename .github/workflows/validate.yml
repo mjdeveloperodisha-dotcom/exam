@@ -40,12 +40,11 @@ jobs:
               "Object.values((await allMap('scoreIndex/'+t.id))||{})",
               "'examAttempts'",
               "'webhookEvents'",
-          for marker in [
               "validateCsrf(req)","X-CSRF-Token","Strict-Transport-Security",
               "Permissions-Policy","Cross-Origin-Opener-Policy","rateLimit(req,'api-global'",
               "/api/auth/csrf","examAttempts/","serverStartedAt","serverExpiresAt",
-              "serverCalculated:true","razorpayApi('GET','/payments/"
-          ]:
+              "serverCalculated:true","razorpayApi('GET','/payments/'"
+          ]
               assert marker in server, f"missing server security marker: {marker}"
           for marker in ["getCsrfToken()","X-CSRF-Token","/start',{}"]:
               assert marker in student, f"missing student security marker: {marker}"
