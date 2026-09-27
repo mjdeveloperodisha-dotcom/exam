@@ -1027,6 +1027,23 @@ async function route(req, res) {
     return send(res,200,{ok:true});
   }
 
+  if(url.pathname==='/api/tests/rating'&&method==='POST'){
+    const {user}=await requireRole(req,'student'),b=await body(req),testId=String(b.testId||''),rating=Number(b.rating),feedback=String(b.feedback||'').trim().slice(0,1000);
+    if(!testId||!Number.isInteger(rating)||rating<1||rating>5)throw new Error('Choose a rating from 1 to 5 stars.');
+    const t=(await allMap('tests'))[testId];if(!t)throw new Error('Test not found.');
+    const submissions=Object.values(await allMap('submissions')).filter(x=>x.testId===testId&&x.userId===user.uid);if(!submissions.length)throw Object.assign(new Error('Complete the test before rating it.'),{status:403});
+    const ratings=await allMap('ratings'),existing=Object.values(ratings).find(x=>x.testId===testId&&x.userId===user.uid),row=existing||{id:uid('rate-'),testId,userId:user.uid,userName:user.name,createdAt:nowIso()};
+    row.rating=rating;row.feedback=feedback;row.updatedAt=nowIso();await set('ratings/'+row.id,row);return send(res,200,{message:existing?'Rating updated.':'Thanks for rating this test.',rating:publicRating(row)});
+  }
+  if(url.pathname==='/api/tests/ratings/mine'&&method==='GET'){
+    const {user}=await requireRole(req,'student'),testId=String(url.searchParams.get('testId')||''),ratings=await allMap('ratings');
+    return send(res,200,{rating:publicRating(Object.values(ratings).find(x=>x.testId===testId&&x.userId===user.uid)||null)});
+  }
+  if(url.pathname==='/api/admin/ratings'&&method==='GET'){
+    await requireRole(req,'admin');const ratings=Object.values(await allMap('ratings')).sort((a,b)=>new Date(b.updatedAt||b.createdAt)-new Date(a.updatedAt||a.createdAt));
+    return send(res,200,{ratings:ratings.map(publicRating)});
+  }
+
   if(url.pathname==='/api/admin/backup'&&method==='GET'){
     await requireRole(req,'admin');
     const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks'];
