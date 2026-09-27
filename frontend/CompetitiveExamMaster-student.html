@@ -758,7 +758,6 @@ window.loginUser = async function(){
     if(!email||!password)throw new Error('Enter your email and password to sign in.');
     
     
-    if(cemAuth?.currentUser)await cemAuth.signOut();
     currentUser=null;
     updateUI();
     const r = await firebaseLogin(email,password);
