@@ -1673,6 +1673,10 @@ window.showResultScreen = function(r){
       <p class="muted">See each question with the correct answer and a full explanation, one at a time.</p>
       <button class="rh-btn primary" onclick="openSolutionViewer(0)">Open Solutions →</button>
     `;
+    box.insertAdjacentHTML('beforeend','<div id="postExamRating" class="card" style="margin-top:18px"><div class="section-title" style="margin-top:0">⭐ Rate this test</div><p class="muted">How useful was this test for you?</p><div id="ratingStars" style="display:flex;gap:6px;margin:10px 0">'+[1,2,3,4,5].map(n=>'<button type="button" class="secondary" style="font-size:22px;padding:7px 11px" onclick="selectTestRating('+n+')">☆</button>').join('')+'</div><textarea id="ratingFeedback" maxlength="1000" placeholder="Optional feedback" style="width:100%;min-height:80px;padding:10px;border:1px solid #d1d5db;border-radius:10px"></textarea><div class="row" style="margin-top:10px"><span id="ratingMsg" class="muted"></span><button class="primary-btn" type="button" onclick="submitTestRating()">Submit Rating</button></div></div>');
+    window.selectedTestRating=0;
+    window.selectTestRating=function(n){window.selectedTestRating=n;document.querySelectorAll('#ratingStars button').forEach((el,i)=>el.textContent=i<n?'★':'☆');};
+    window.submitTestRating=async function(){try{if(!window.selectedTestRating)throw new Error('Choose a star rating first.');const rr=await api('POST','/api/tests/rating',{testId:r.testId,rating:window.selectedTestRating,feedback:document.getElementById('ratingFeedback').value});msg('ratingMsg',rr.message,true);document.querySelector('#postExamRating button.primary-btn').disabled=true;}catch(e){msg('ratingMsg',e.message);}};
 };
 
 
