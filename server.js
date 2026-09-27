@@ -265,6 +265,8 @@ async function ensureSeeds() {
   if (!(await get('orders'))) await set('orders', {});
   if (!(await get('ratings'))) await set('ratings', {});
   if (!(await get('attemptLocks'))) await set('attemptLocks', {});
+  if (!(await get('examAttempts'))) await set('examAttempts', {});
+  if (!(await get('webhookEvents'))) await set('webhookEvents', {});
   if (!(await get('passwordResets'))) await set('passwordResets', {});
   if (!(await get('scoreIndex'))) {
     const subs=await allMap('submissions'),idx={};
@@ -417,10 +419,10 @@ async function paidAccessBlocked(test, user) {
 
 async function attemptBlocked(test,user){
   if(test.attemptPolicy!=='once'||user.role!=='student')return false;
-  const locks=await allMap('attemptLocks/'+encodeURIComponent(test.id));
+  const locks=(await allMap('attemptLocks/'+encodeURIComponent(test.id)))||{};
   if(Object.prototype.hasOwnProperty.call(locks,encodeURIComponent(user.uid)))return true;
-  const scores=await allMap('scoreIndex/'+encodeURIComponent(test.id));
-  return Object.values(scores).some(x=>x.userId===user.uid);
+  const scores=(await allMap('scoreIndex/'+encodeURIComponent(test.id)))||{};
+  return Object.values(scores).some(x=>x&&x.userId===user.uid);
 }
 
 async function body(req) {
@@ -1087,7 +1089,7 @@ async function route(req, res) {
 
   if(url.pathname==='/api/admin/backup'&&method==='GET'){
     await requireRole(req,'admin');
-    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','scoreIndex'];
+    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','examAttempts','scoreIndex','webhookEvents'];
     const out={}; for(const n of names) out[n]=await get(n);
     return send(res,200,out);
   }
@@ -1095,7 +1097,7 @@ async function route(req, res) {
     await requireRole(req,'admin');
     const b=await body(req);
     if(!b.users||!b.tests) throw new Error('Backup is missing users/tests.');
-    for(const n of ['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','scoreIndex']) if(b[n]!==undefined) await set(n,b[n]);
+    for(const n of ['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','examAttempts','scoreIndex','webhookEvents']) if(b[n]!==undefined) await set(n,b[n]);
     return send(res,200,{message:'Restore complete.'});
   }
 
@@ -1126,7 +1128,7 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
     const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject:encodeTimeBySubject(timeBySubject),submittedAt,integrity:{serverCalculated:true,submissionId:id}};
     await multiUpdate({['submissions/'+id]:saved,['scoreIndex/'+t.id+'/'+id]:{score,userId:user.uid,submittedAt}});
   }
-  const allScores=Object.values(await allMap('scoreIndex/'+t.id)).map(s=>Number(s.score)||0);
+  const allScores=Object.values((await allMap('scoreIndex/'+t.id))||{}).map(s=>Number(s?.score)||0);
   const totalAttempts=allScores.length;
   const rank=allScores.filter(s=>s>score).length+1;
   const below=allScores.filter(s=>s<score).length;
