@@ -1349,6 +1349,7 @@ window.choosePlan = function(id, forceManual){
       <div class="muted">${p.days} days of access to all paid test series</div>
     </div>
     ${upi ? `
+      ${payment.qrDataUrl ? `<div style="text-align:center;margin:12px 0"><img src="${esc(payment.qrDataUrl)}" alt="UPI payment QR code" style="width:min(280px,80vw);max-height:280px;object-fit:contain;border:1px solid #e5e7eb;border-radius:12px;padding:8px;background:#fff"><p class="muted">Scan this QR code with any UPI app</p></div>` : ''}
       <p style="margin:14px 0 4px"><b>Pay by UPI</b> to <b>${esc(payment.payeeName||'')}</b></p>
       <p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><code style="font-size:16px;padding:6px 10px;background:#eef2ff;border-radius:8px">${esc(upi)}</code>
         <button class="secondary" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(upi)}');this.textContent='Copied ✓'">Copy UPI ID</button>
