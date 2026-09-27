@@ -348,9 +348,10 @@ function publicUser(u) {
 }
 
 function parseCookies(req){const out={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)out[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());}return out;}
-function getSessionToken(req){const c=parseCookies(req),h=req.headers.authorization||'';return c.cem_session||(h.startsWith('Bearer ')?h.slice(7):'');}
+function getSessionToken(req,portal){const c=parseCookies(req),h=req.headers.authorization||'',p=String(portal||req.headers['x-cem-portal']||'').toLowerCase();if(p==='admin')return c.cem_admin_session||(h.startsWith('Bearer ')?h.slice(7):'');if(p==='student')return c.cem_user_session||(h.startsWith('Bearer ')?h.slice(7):'');return c.cem_user_session||c.cem_admin_session||(h.startsWith('Bearer ')?h.slice(7):'');}
 async function currentUser(req,roles){
-  const token=getSessionToken(req),adminSession=verifyAdminSession(token),userSession=verifyUserSession(token);
+  const portal=String(req.headers['x-cem-portal']||'').toLowerCase();
+  const token=getSessionToken(req,portal),adminSession=verifyAdminSession(token),userSession=verifyUserSession(token);
   if(!adminSession&&!userSession)throw Object.assign(new Error('Please log in.'),{status:401});
   const decoded=adminSession?{uid:adminSession.uid,email:CFG.admin.email,name:CFG.admin.name,role:'admin'}:{uid:userSession.uid,email:userSession.email,name:userSession.name,role:userSession.role};
   const user=await get('users/'+decoded.uid);
@@ -430,8 +431,9 @@ async function body(req) {
   });
 }
 
-function setSessionCookie(res,token){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';res.setHeader('Set-Cookie','cem_session='+encodeURIComponent(token)+'; Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=43200');}
-function clearSessionCookie(res){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';res.setHeader('Set-Cookie','cem_session=; Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=0');}
+function cookieBase(res){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';return 'Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=43200';}
+function setSessionCookie(res,token,portal){const name=portal==='admin'?'cem_admin_session':'cem_user_session';res.setHeader('Set-Cookie',name+'='+encodeURIComponent(token)+'; '+cookieBase(res));}
+function clearSessionCookie(res,portal){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';const base='Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=0';const names=portal==='admin'?['cem_admin_session']:portal==='student'?['cem_user_session']:['cem_admin_session','cem_user_session'];res.setHeader('Set-Cookie',names.map(n=>n+'=; '+base));}
 function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'",'Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.end(JSON.stringify(data));}
 
 function errorStatus(e){ return Number(e.status)||500; }
@@ -560,7 +562,7 @@ async function route(req, res) {
     if(!crypto.timingSafeEqual(Buffer.from(hashAdminOtp(otp)),Buffer.from(adminOtpState.hash))) throw Object.assign(new Error('Incorrect OTP.'),{status:401});
     const adminUid='admin-cem-master';
     adminOtpState.hash=''; adminOtpState.expiresAt=0; adminOtpState.attempts=0;
-    setSessionCookie(res,createAdminSession(adminUid));
+    setSessionCookie(res,createAdminSession(adminUid),'admin');
     return send(res,200,{
       message:'Admin login successful.',
       user:{uid:adminUid,name:CFG.admin.name,email:CFG.admin.email,role:'admin',status:'approved',blocked:false}
@@ -568,7 +570,10 @@ async function route(req, res) {
   }
 
   if (url.pathname==='/api/auth/me' && method==='GET') {
-    try { const {user}=await currentUser(req); return send(res,200,{user:publicUser(user)}); }
+    try {
+      const portal=String(req.headers['x-cem-portal']||'').toLowerCase();
+      const roles=portal==='admin'?['admin']:portal==='student'?['student','teacher']:undefined;
+      const {user}=await currentUser(req,roles); return send(res,200,{user:publicUser(user)}); }
     catch(e){ if(errorStatus(e)===401) return send(res,200,{user:null}); throw e; }
   }
 
@@ -598,18 +603,18 @@ async function route(req, res) {
     if(user.password&&!user.passwordHash){const upgraded={...user,passwordHash:hashPassword(password),updatedAt:nowIso()};delete upgraded.password;await set('users/'+user.uid,upgraded);Object.assign(user,upgraded);}
     if(user.blocked)throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'),{status:403});
     if(user.role==='teacher'&&user.status!=='approved')throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
-    setSessionCookie(res,createUserSession(user.uid,user.email,user.role,user.name));
+    setSessionCookie(res,createUserSession(user.uid,user.email,user.role,user.name),'student');
     return send(res,200,{message:'Login successful.',user:publicUser(user)});
   }
 
   if(url.pathname==='/api/auth/logout'&&method==='POST'){clearSessionCookie(res);return send(res,200,{message:'Logged out.'});}
 
   if (url.pathname==='/api/account/me' && method==='GET') {
-    const {user}=await currentUser(req);
+    const {user}=await currentUser(req,['student','teacher']);
     return send(res,200,{user:publicUser(user)});
   }
   if (url.pathname==='/api/account/me' && method==='PUT') {
-    const {uid,user,decoded}=await currentUser(req);
+    const {uid,user,decoded}=await currentUser(req,['student','teacher']);
     const b=await body(req);
     const name=b.name!==undefined?String(b.name).trim():user.name, mobile=b.mobile!==undefined?String(b.mobile).trim():user.mobile, subject=b.subject!==undefined?String(b.subject).trim():user.subject;
     if(!name) throw new Error("Name can't be empty.");
@@ -621,7 +626,7 @@ async function route(req, res) {
     return send(res,200,{message:'Account updated.',user:publicUser(updated)});
   }
   if(url.pathname==='/api/account/email'&&method==='PUT'){
-    const {uid,user}=await currentUser(req),b=await body(req),email=cleanEmail(b.email),currentPassword=String(b.currentPassword||'');
+    const {uid,user}=await currentUser(req,['student','teacher']),b=await body(req),email=cleanEmail(b.email),currentPassword=String(b.currentPassword||'');
     if(!EMAIL_RE.test(email))throw new Error('Enter a valid new email address.');
     if(!passwordMatches(currentPassword,user))throw Object.assign(new Error('Current password is incorrect.'),{status:401});
     const users=Object.values(await allMap('users'));if(users.some(u=>u.uid!==uid&&cleanEmail(u.email)===email))throw new Error('This email is already registered.');
@@ -630,7 +635,7 @@ async function route(req, res) {
     setSessionCookie(res,createUserSession(uid,email,user.role,user.name));return send(res,200,{message:'Login email changed successfully.',user:publicUser(updated)});
   }
   if(url.pathname==='/api/account/password'&&method==='PUT'){
-    const {uid,user}=await currentUser(req),b=await body(req);
+    const {uid,user}=await currentUser(req,['student','teacher']),b=await body(req);
     const currentPassword=String(b.currentPassword||''),newPassword=String(b.newPassword||'');
     if(!passwordMatches(currentPassword,user))throw Object.assign(new Error('Current password is incorrect.'),{status:401});
     if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword))throw new Error('New password must contain at least 8 characters with uppercase, lowercase and a number.');
