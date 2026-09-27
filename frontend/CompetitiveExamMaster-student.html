@@ -576,7 +576,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 const firebaseReady=Promise.resolve();
 async function api(method,url,body){
-  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json','X-CEM-Portal':'student'},credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;
 }
 function esc(value){const s=String(value??'');return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
@@ -709,7 +709,7 @@ window.registerStudent = async function(){
   const confirmPassword=document.getElementById('studentConfirmPassword').value;
   const email=document.getElementById('studentEmail').value.trim();
   if(password!==confirmPassword){ msg('studentMsg','Passwords do not match.'); return; }
-  if(password.length<6){ msg('studentMsg','Password must contain at least 6 characters.'); return; }
+  if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('studentMsg','Password must contain at least 8 characters with uppercase, lowercase and a number.'); return; }
   if(!email){ msg('studentMsg','Please enter your email address.'); return; }
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
@@ -732,7 +732,7 @@ window.registerTeacher = async function(){
   const confirmPassword=document.getElementById('teacherConfirmPassword').value;
   const email=document.getElementById('teacherEmail').value.trim();
   if(password!==confirmPassword){ msg('teacherMsg','Passwords do not match.'); return; }
-  if(password.length<6){ msg('teacherMsg','Password must contain at least 6 characters.'); return; }
+  if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('teacherMsg','Password must contain at least 8 characters with uppercase, lowercase and a number.'); return; }
   if(!email){ msg('teacherMsg','Please enter your email address.'); return; }
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
@@ -2046,6 +2046,7 @@ async function initializeAuthSession(){
   showSection('home');
   if(user?.role==='student')retryPendingGatewayPayment(true);
 }
+showSection('home');
 loadBranding();
 refreshModuleViews();
 initializeAuthSession().catch(()=>{currentUser=null;updateUI();showSection('home');});
