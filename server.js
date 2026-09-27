@@ -58,7 +58,6 @@ const CFG = {
 CFG.payment.enabled = !CFG.payment.mock;
 
 let db = null;
-let auth = null;
 let useMemDb = false;
 
 if (admin && CFG.dbUrl && CFG.projectId && CFG.clientEmail && CFG.privateKey) {
@@ -72,7 +71,6 @@ if (admin && CFG.dbUrl && CFG.projectId && CFG.clientEmail && CFG.privateKey) {
       databaseURL: CFG.dbUrl
     });
     db = admin.database();
-    auth = admin.auth();
     console.log('[System] Storage connected successfully.');
   } catch (err) {
     console.warn('[System] Cloud storage connection fallback:', err.message);
@@ -257,26 +255,34 @@ async function ensureSeeds() {
   if (!(await get('subscriptions'))) await set('subscriptions', {});
   if (!(await get('purchases'))) await set('purchases', {});
   if (!(await get('orders'))) await set('orders', {});
+  if (!(await get('ratings'))) await set('ratings', {});
+  if (!(await get('attemptLocks'))) await set('attemptLocks', {});
+  if (!(await get('passwordResets'))) await set('passwordResets', {});
 }
 
-const ADMIN_OTP_SECRET = process.env.ADMIN_OTP_SECRET || crypto.randomBytes(32).toString('hex');
+const AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('hex'));
+if (process.env.NODE_ENV === 'production' && AUTH_SESSION_SECRET.length < 32) throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
 const ADMIN_OTP_TTL_MS = 10 * 60 * 1000;
 const adminOtpState = { hash:'', expiresAt:0, attempts:0, sentAt:0 };
+const rateBuckets = new Map();
+function clientIp(req){ return String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().slice(0,80); }
+function rateLimit(req,key,limit,windowMs){const k=key+':'+clientIp(req),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
+setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
 
 function hashAdminOtp(otp) {
-  return crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(String(otp)).digest('hex');
+  return crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(String(otp)).digest('hex');
 }
 
 function createAdminSession(uidValue) {
   const payload = Buffer.from(JSON.stringify({ uid:uidValue, email:CFG.admin.email, exp:Date.now()+12*60*60*1000 })).toString('base64url');
-  const sig = crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(payload).digest('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(payload).digest('base64url');
   return 'ADM1.' + payload + '.' + sig;
 }
 
 function verifyAdminSession(token) {
   if (!String(token||'').startsWith('ADM1.')) return null;
   const parts = String(token).split('.'); if (parts.length!==3) return null;
-  const expected = crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(parts[1]).digest('base64url');
+  const expected = crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(parts[1]).digest('base64url');
   if (parts[2].length!==expected.length || !crypto.timingSafeEqual(Buffer.from(parts[2]), Buffer.from(expected))) return null;
   try {
     const p = JSON.parse(Buffer.from(parts[1],'base64url').toString('utf8'));
@@ -287,14 +293,14 @@ function verifyAdminSession(token) {
 
 function createUserSession(uidValue, emailValue, roleValue, nameValue) {
   const payload = Buffer.from(JSON.stringify({ uid:uidValue, email:emailValue, role:roleValue, name:nameValue||'User', exp:Date.now()+12*60*60*1000 })).toString('base64url');
-  const sig = crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(payload).digest('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(payload).digest('base64url');
   return 'USR1.' + payload + '.' + sig;
 }
 
 function verifyUserSession(token) {
   if (!String(token||'').startsWith('USR1.')) return null;
   const parts = String(token).split('.'); if (parts.length!==3) return null;
-  const expected = crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(parts[1]).digest('base64url');
+  const expected = crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(parts[1]).digest('base64url');
   if (parts[2].length!==expected.length || !crypto.timingSafeEqual(Buffer.from(parts[2]), Buffer.from(expected))) return null;
   try {
     const p = JSON.parse(Buffer.from(parts[1],'base64url').toString('utf8'));
@@ -304,39 +310,9 @@ function verifyUserSession(token) {
 }
 
 async function bootstrapAdmin() {
-  let adminUid = 'admin-cem-master';
-  if (auth) {
-    try {
-      let u;
-      try { u = await auth.getUserByEmail(CFG.admin.email); }
-      catch (e) {
-        if (e.code === 'auth/user-not-found') {
-          u = await auth.createUser({
-            email: CFG.admin.email,
-            password: crypto.randomBytes(24).toString('base64url') + 'A1!',
-            displayName: CFG.admin.name,
-            emailVerified: true
-          });
-        }
-      }
-      if (u) {
-        adminUid = u.uid;
-        await auth.setCustomUserClaims(u.uid, { role:'admin' });
-      }
-    } catch (err) {
-      console.warn('[Admin Bootstrap] Auth warning:', err.message);
-    }
-  }
-  await update('users/'+adminUid, {
-    uid: adminUid,
-    name: CFG.admin.name,
-    email: CFG.admin.email,
-    role: 'admin',
-    status: 'approved',
-    blocked: false,
-    createdAt: (await get('users/'+adminUid+'/createdAt')) || nowIso()
-  });
-  console.log('Admin account ready:', CFG.admin.email);
+  const adminUid='admin-cem-master';
+  await update('users/'+adminUid,{uid:adminUid,name:CFG.admin.name,email:CFG.admin.email,role:'admin',status:'approved',blocked:false,registrationComplete:true,createdAt:(await get('users/'+adminUid+'/createdAt'))||nowIso()});
+  console.log('Manual-auth Admin account ready:',CFG.admin.email);
 }
 
 async function ensureProfile(uidValue, decoded = {}) {
@@ -357,37 +333,19 @@ function publicUser(u) {
   return copy;
 }
 
-async function currentUser(req, roles) {
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Bearer ')) throw Object.assign(new Error('Please log in.'), { status:401 });
-  const bearer = header.slice(7);
-  const adminSession = verifyAdminSession(bearer);
-  const userSession = verifyUserSession(bearer);
-  let decoded;
-  if (adminSession) {
-    decoded = { uid:adminSession.uid, email:CFG.admin.email, name:CFG.admin.name, adminSession:true, role:'admin' };
-  } else if (userSession) {
-    decoded = { uid:userSession.uid, email:userSession.email, name:userSession.name, role:userSession.role };
-  } else if (auth) {
-    try { decoded = await auth.verifyIdToken(bearer); }
-    catch (_) { throw Object.assign(new Error('Your login session has expired. Please log in again.'), { status:401 }); }
-  } else {
-    throw Object.assign(new Error('Your login session has expired. Please log in again.'), { status:401 });
-  }
-  const user = await ensureProfile(decoded.uid, decoded);
-  if (userSession) {
-    decoded.email=user.email;
-    decoded.name=user.name;
-    decoded.role=user.role;
-  }
-  if (user.blocked) throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'), { status:403 });
-  if (roles && !roles.includes(user.role)) throw Object.assign(new Error('Not authorized.'), { status:403 });
-  if (user.role === 'teacher' && user.status !== 'approved' && (!roles || roles.includes('teacher'))) {
-    throw Object.assign(new Error('Teacher account is pending Admin approval.'), { status:403 });
-  }
-  return { uid:decoded.uid, decoded, user };
+function parseCookies(req){const out={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)out[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());}return out;}
+function getSessionToken(req){const c=parseCookies(req),h=req.headers.authorization||'';return c.cem_session||(h.startsWith('Bearer ')?h.slice(7):'');}
+async function currentUser(req,roles){
+  const token=getSessionToken(req),adminSession=verifyAdminSession(token),userSession=verifyUserSession(token);
+  if(!adminSession&&!userSession)throw Object.assign(new Error('Please log in.'),{status:401});
+  const decoded=adminSession?{uid:adminSession.uid,email:CFG.admin.email,name:CFG.admin.name,role:'admin'}:{uid:userSession.uid,email:userSession.email,name:userSession.name,role:userSession.role};
+  const user=await get('users/'+decoded.uid);
+  if(!user)throw Object.assign(new Error('Account no longer exists. Please log in again.'),{status:401});
+  if(user.blocked)throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'),{status:403});
+  if(roles&&!roles.includes(user.role))throw Object.assign(new Error('Not authorized.'),{status:403});
+  if(user.role==='teacher'&&user.status!=='approved'&&(!roles||roles.includes('teacher')))throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
+  return {uid:user.uid,decoded,user};
 }
-
 function requireRole(req, role) { return currentUser(req, [role]); }
 
 async function sendEmail(to, subject, html, text='') {
@@ -456,16 +414,9 @@ async function body(req) {
   });
 }
 
-function send(res, status, data) {
-  res.writeHead(status, {
-    'Content-Type':'application/json; charset=utf-8',
-    'Cache-Control':'no-store',
-    'Access-Control-Allow-Origin':'*',
-    'Access-Control-Allow-Headers':'Content-Type, Authorization',
-    'Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'
-  });
-  res.end(JSON.stringify(data));
-}
+function setSessionCookie(res,token){res.setHeader('Set-Cookie','cem_session='+encodeURIComponent(token)+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200');}
+function clearSessionCookie(res){res.setHeader('Set-Cookie','cem_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0');}
+function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'",'Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.end(JSON.stringify(data));}
 
 function errorStatus(e){ return Number(e.status)||500; }
 
@@ -552,13 +503,14 @@ async function route(req, res) {
   if (method==='OPTIONS') return send(res,204,{});
 
   if (url.pathname==='/api/config' && method==='GET') {
-    return send(res,200,{ firebase:CFG.web, paymentGatewayUrl: process.env.PAYMENT_GATEWAY_URL || '', paymentEnabled:CFG.payment.enabled, paymentMode:CFG.payment.enabled?'test':null });
+    return send(res,200,{paymentEnabled:CFG.payment.enabled,paymentMode:CFG.payment.enabled?'test':null,authMode:'manual'});
   }
   if (url.pathname==='/api/health' && method==='GET') {
     return send(res,200,{ok:true, status:'online'});
   }
 
   if (url.pathname==='/api/admin/request-otp' && method==='POST') {
+    rateLimit(req,'admin-otp',5,900000);
     const b=await body(req), email=cleanEmail(b.email);
     if(email!==CFG.admin.email) throw Object.assign(new Error('This email is not authorized for Admin access.'),{status:403});
     if(Date.now()-adminOtpState.sentAt < 60*1000) throw Object.assign(new Error('Please wait 60 seconds before requesting another OTP.'),{status:429});
@@ -583,17 +535,16 @@ async function route(req, res) {
   }
 
   if (url.pathname==='/api/admin/verify-otp' && method==='POST') {
+    rateLimit(req,'admin-otp-verify',15,900000);
     const b=await body(req), email=cleanEmail(b.email), otp=String(b.otp||'').trim();
     if(email!==CFG.admin.email) throw Object.assign(new Error('This email is not authorized for Admin access.'),{status:403});
     if(!/^\d{6}$/.test(otp) || !adminOtpState.hash || Date.now()>adminOtpState.expiresAt) throw Object.assign(new Error('OTP is invalid or expired. Request a new OTP.'),{status:401});
     adminOtpState.attempts++;
     if(adminOtpState.attempts>5){ adminOtpState.hash=''; throw Object.assign(new Error('Too many OTP attempts. Request a new OTP.'),{status:429}); }
     if(!crypto.timingSafeEqual(Buffer.from(hashAdminOtp(otp)),Buffer.from(adminOtpState.hash))) throw Object.assign(new Error('Incorrect OTP.'),{status:401});
-    let adminUid = 'admin-cem-master';
-    if (auth) {
-      try { const u=await auth.getUserByEmail(CFG.admin.email); adminUid = u.uid; } catch(_) {}
-    }
+    const adminUid='admin-cem-master';
     adminOtpState.hash=''; adminOtpState.expiresAt=0; adminOtpState.attempts=0;
+    setSessionCookie(res,createAdminSession(adminUid));
     return send(res,200,{
       message:'Admin login successful.',
       sessionToken:createAdminSession(adminUid),
@@ -606,78 +557,36 @@ async function route(req, res) {
     catch(e){ if(errorStatus(e)===401) return send(res,200,{user:null}); throw e; }
   }
 
-  if (url.pathname==='/api/auth/register/student' && method==='POST') {
-    const b=await body(req);
-    const header = req.headers.authorization || '';
-    let uidVal, emailVal;
-    if (header.startsWith('Bearer ')) {
-      const {uid: decodedUid, decoded} = await currentUser(req);
-      uidVal = decodedUid;
-      emailVal = cleanEmail(decoded.email);
-    } else {
-      uidVal = uid('std-');
-      emailVal = cleanEmail(b.email);
-    }
-    const name=String(b.name||'').trim(), mobile=String(b.mobile||'').trim();
-    if(!name || !EMAIL_RE.test(emailVal) || !mobile || !MOBILE_RE.test(mobile)) throw new Error('Please provide a valid name, email and mobile number.');
-    const users=Object.values(await allMap('users'));
-    if(users.some(u=>cleanEmail(u.email)===emailVal && u.uid!==uidVal)) throw new Error('This email is already registered.');
-    const existing=await get('users/'+uidVal);
-    if(existing && existing.registrationComplete) throw new Error('This account is already registered.');
-    if(!header.startsWith('Bearer ')&&String(b.password||'').length<6) throw new Error('Password must contain at least 6 characters.');
-    const credential=header.startsWith('Bearer ')?{}:{passwordHash:hashPassword(b.password)};
-    const profile={uid:uidVal,name,email:emailVal,mobile,...credential,role:'student',status:'approved',blocked:false,registrationComplete:true,createdAt:existing?.createdAt||nowIso()};
-    await set('users/'+uidVal,profile);
-    return send(res,200,{message:'Student account created. Please sign in to continue.',user:publicUser(profile)});
+  if(url.pathname==='/api/auth/register/student'&&method==='POST'){
+    rateLimit(req,'register',8,3600000);
+    const b=await body(req),uidVal=uid('std-'),emailVal=cleanEmail(b.email),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),password=String(b.password||'');
+    if(!name||!EMAIL_RE.test(emailVal)||!mobile||!MOBILE_RE.test(mobile))throw new Error('Please provide a valid name, email and mobile number.');
+    if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password))throw new Error('Password must contain at least 8 characters with uppercase, lowercase and a number.');
+    const users=Object.values(await allMap('users'));if(users.some(u=>cleanEmail(u.email)===emailVal))throw new Error('This email is already registered.');
+    const profile={uid:uidVal,name,email:emailVal,mobile,passwordHash:hashPassword(password),role:'student',status:'approved',blocked:false,registrationComplete:true,createdAt:nowIso()};
+    await set('users/'+uidVal,profile);return send(res,200,{message:'Student account created. Please sign in to continue.',user:publicUser(profile)});
+  }
+  if(url.pathname==='/api/auth/register/teacher'&&method==='POST'){
+    rateLimit(req,'register',8,3600000);
+    const b=await body(req),uidVal=uid('tch-'),emailVal=cleanEmail(b.email),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),subject=String(b.subject||'').trim(),password=String(b.password||'');
+    if(!name||!EMAIL_RE.test(emailVal)||!mobile||!subject||!MOBILE_RE.test(mobile))throw new Error('Please fill all fields with a valid mobile number.');
+    if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password))throw new Error('Password must contain at least 8 characters with uppercase, lowercase and a number.');
+    const users=Object.values(await allMap('users'));if(users.some(u=>cleanEmail(u.email)===emailVal))throw new Error('This email is already registered.');
+    const profile={uid:uidVal,name,email:emailVal,mobile,subject,passwordHash:hashPassword(password),role:'teacher',status:'pending',blocked:false,registrationComplete:true,createdAt:nowIso()};
+    await set('users/'+uidVal,profile);return send(res,200,{message:'Registration submitted. Wait for Admin approval before logging in.',user:publicUser(profile)});
+  }
+  if(url.pathname==='/api/auth/login'&&method==='POST'){
+    rateLimit(req,'login',12,900000);
+    const b=await body(req),email=cleanEmail(b.email),password=String(b.password||'');if(!EMAIL_RE.test(email)||!password)throw Object.assign(new Error('Invalid email or password.'),{status:401});
+    const users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
+    if(!user||!passwordMatches(password,user))throw Object.assign(new Error('Invalid email or password.'),{status:401});
+    if(user.blocked)throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'),{status:403});
+    if(user.role==='teacher'&&user.status!=='approved')throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
+    setSessionCookie(res,createUserSession(user.uid,user.email,user.role,user.name));
+    return send(res,200,{message:'Login successful.',user:publicUser(user)});
   }
 
-  if (url.pathname==='/api/auth/register/teacher' && method==='POST') {
-    const b=await body(req);
-    const header = req.headers.authorization || '';
-    let uidVal, emailVal;
-    if (header.startsWith('Bearer ')) {
-      const {uid: decodedUid, decoded} = await currentUser(req);
-      uidVal = decodedUid;
-      emailVal = cleanEmail(decoded.email);
-    } else {
-      uidVal = uid('tch-');
-      emailVal = cleanEmail(b.email);
-    }
-    const name=String(b.name||'').trim(), mobile=String(b.mobile||'').trim(), subject=String(b.subject||'').trim();
-    if(!name || !EMAIL_RE.test(emailVal) || !mobile || !subject || !MOBILE_RE.test(mobile)) throw new Error('Please fill all fields with a valid mobile number.');
-    const users=Object.values(await allMap('users'));
-    if(users.some(u=>cleanEmail(u.email)===emailVal && u.uid!==uidVal)) throw new Error('This email is already registered.');
-    const existing=await get('users/'+uidVal);
-    if(existing && existing.registrationComplete) throw new Error('This account is already registered.');
-    if(!header.startsWith('Bearer ')&&String(b.password||'').length<6) throw new Error('Password must contain at least 6 characters.');
-    const credential=header.startsWith('Bearer ')?{}:{passwordHash:hashPassword(b.password)};
-    const profile={uid:uidVal,name,email:emailVal,mobile,subject,...credential,role:'teacher',status:'pending',blocked:false,registrationComplete:true,createdAt:existing?.createdAt||nowIso()};
-    await set('users/'+uidVal,profile);
-    return send(res,200,{message:'Registration submitted. Wait for Admin approval before logging in.',user:publicUser(profile)});
-  }
-
-  if (url.pathname==='/api/auth/login' && method==='POST') {
-    const header = req.headers.authorization || '';
-    if (header.startsWith('Bearer ')) {
-      const {user}=await currentUser(req);
-      if(user.role==='teacher' && user.status!=='approved') throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
-      return send(res,200,{message:'Login successful.',user:publicUser(user)});
-    }
-    const b=await body(req);
-    const email=cleanEmail(b.email);
-    const password=String(b.password||'');
-    const users=Object.values(await allMap('users'));
-    const user=users.find(u=>cleanEmail(u.email)===email);
-    if(!user) throw Object.assign(new Error('Invalid email or password.'),{status:401});
-    if(!passwordMatches(password,user)) throw Object.assign(new Error('Invalid email or password.'),{status:401});
-    if(user.blocked) throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'),{status:403});
-    if(user.role==='teacher' && user.status!=='approved') throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
-    if(Object.prototype.hasOwnProperty.call(user,'password')){user.passwordHash=hashPassword(password);delete user.password;await set('users/'+user.uid,user);}
-    const sessionToken = createUserSession(user.uid, user.email, user.role, user.name);
-    return send(res,200,{message:'Login successful.',sessionToken,user:publicUser(user)});
-  }
-
-  if (url.pathname==='/api/auth/logout' && method==='POST') return send(res,200,{message:'Logged out.'});
+  if(url.pathname==='/api/auth/logout'&&method==='POST'){clearSessionCookie(res);return send(res,200,{message:'Logged out.'});}
 
   if (url.pathname==='/api/account/me' && method==='GET') {
     const {user}=await currentUser(req);
@@ -696,27 +605,37 @@ async function route(req, res) {
     return send(res,200,{message:'Account updated.',user:publicUser(updated)});
   }
   if(url.pathname==='/api/account/email'&&method==='PUT'){
-    const {uid,user,decoded}=await currentUser(req),b=await body(req);
-    if(decoded.firebase) throw Object.assign(new Error('Change your email through your Firebase account settings.'),{status:400});
-    const email=cleanEmail(b.email),currentPassword=String(b.currentPassword||'');
+    const {uid,user}=await currentUser(req),b=await body(req),email=cleanEmail(b.email),currentPassword=String(b.currentPassword||'');
     if(!EMAIL_RE.test(email))throw new Error('Enter a valid new email address.');
     if(!passwordMatches(currentPassword,user))throw Object.assign(new Error('Current password is incorrect.'),{status:401});
-    const users=Object.values(await allMap('users'));
-    if(users.some(u=>u.uid!==uid&&cleanEmail(u.email)===email))throw new Error('This email is already registered.');
-    const updated={...user,email,updatedAt:nowIso(),passwordHash:hashPassword(currentPassword)};delete updated.password;
-    await set('users/'+uid,updated);
+    const users=Object.values(await allMap('users'));if(users.some(u=>u.uid!==uid&&cleanEmail(u.email)===email))throw new Error('This email is already registered.');
+    const updated={...user,email,updatedAt:nowIso(),passwordHash:hashPassword(currentPassword)};delete updated.password;await set('users/'+uid,updated);
     if(user.role==='teacher')await migrateLegacyTestOwnership(uid,user.email,email);
-    return send(res,200,{message:'Login email changed successfully.',sessionToken:createUserSession(uid,email,user.role,user.name),user:publicUser(updated)});
+    setSessionCookie(res,createUserSession(uid,email,user.role,user.name));return send(res,200,{message:'Login email changed successfully.',user:publicUser(updated)});
   }
   if(url.pathname==='/api/account/password'&&method==='PUT'){
-    const {uid,user,decoded}=await currentUser(req),b=await body(req);
-    if(decoded.firebase)throw Object.assign(new Error('Change your password through your Firebase account settings.'),{status:400});
+    const {uid,user}=await currentUser(req),b=await body(req);
     const currentPassword=String(b.currentPassword||''),newPassword=String(b.newPassword||'');
     if(!passwordMatches(currentPassword,user))throw Object.assign(new Error('Current password is incorrect.'),{status:401});
-    if(newPassword.length<6)throw new Error('New password must contain at least 6 characters.');
+    if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword))throw new Error('New password must contain at least 8 characters with uppercase, lowercase and a number.');
     const updated={...user,passwordHash:hashPassword(newPassword),updatedAt:nowIso()};delete updated.password;
     await set('users/'+uid,updated);
     return send(res,200,{message:'Password changed successfully.'});
+  }
+
+  if(url.pathname==='/api/auth/forgot/request'&&method==='POST'){
+    rateLimit(req,'forgot',5,1800000);const b=await body(req),email=cleanEmail(b.email);if(!EMAIL_RE.test(email))throw new Error('Enter a valid email address.');
+    const users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
+    if(user){const otp=String(crypto.randomInt(100000,1000000));await set('passwordResets/'+user.uid,{hash:crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(otp).digest('hex'),expiresAt:Date.now()+600000,attempts:0});const sent=await sendEmail(email,'Competitive Exam Master password reset',emailShell('Password reset','<p>Your password reset code is:</p><div style="font-size:32px;font-weight:800;letter-spacing:8px;padding:14px 0">'+otp+'</div><p>This code expires in 10 minutes.</p>'));if(!sent)throw Object.assign(new Error('Email delivery is unavailable right now.'),{status:503});}
+    return send(res,200,{message:'If an account exists for that email, a reset code has been sent.'});
+  }
+  if(url.pathname==='/api/auth/forgot/confirm'&&method==='POST'){
+    rateLimit(req,'forgot-confirm',10,1800000);const b=await body(req),email=cleanEmail(b.email),otp=String(b.otp||''),newPassword=String(b.newPassword||''),users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
+    if(!user)throw Object.assign(new Error('Invalid or expired reset request.'),{status:400});
+    if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword))throw new Error('New password must contain at least 8 characters with uppercase, lowercase and a number.');
+    const reset=await get('passwordResets/'+user.uid),hash=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(otp).digest('hex'),stored=String(reset?.hash||'');
+    if(!reset||Date.now()>Number(reset.expiresAt)||!/^\d{6}$/.test(otp)||stored.length!==hash.length||!crypto.timingSafeEqual(Buffer.from(hash),Buffer.from(stored)))throw Object.assign(new Error('Invalid or expired reset code.'),{status:400});
+    await set('users/'+user.uid,{...user,passwordHash:hashPassword(newPassword),updatedAt:nowIso()});await remove('passwordResets/'+user.uid);return send(res,200,{message:'Password reset successfully. You can now sign in.'});
   }
 
   if (url.pathname==='/api/admin/users' && method==='GET') {
@@ -860,7 +779,7 @@ async function route(req, res) {
     if(!t||!t.published) throw new Error('Test not found.');
     if(await paidAccessBlocked(t,user)) throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
     if(await attemptBlocked(t,user)) throw new Error('You have already attempted this test. Only one attempt is allowed for this test series.');
-    return send(res,200,{...summarizeTest(t),questions:t.questions.map((q,i)=>({index:i,question:q.question,options:q.options,subject:q.subject||'General',marks:q.marks,negative:q.negative,translations:q.translations||{}}))});
+    return send(res,200,{...summarizeTest(t),attemptId:crypto.randomBytes(18).toString('base64url'),questions:t.questions.map((q,i)=>({index:i,question:q.question,options:q.options,subject:q.subject||'General',marks:q.marks,negative:q.negative,translations:q.translations||{}}))});
   }
   if(mTest && method==='GET' && mTest[2]==='solution'){
     const {user}=await currentUser(req), tests=await allMap('tests'), t=tests[decodeURIComponent(mTest[1])];
@@ -870,17 +789,20 @@ async function route(req, res) {
     if(!saved) throw new Error('Attempt this test first to view its solution.');
     return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,true));
   }
-  if(mTest && method==='POST' && mTest[2]==='submit'){
-    const {user}=await currentUser(req), tests=await allMap('tests'), t=tests[decodeURIComponent(mTest[1])];
-    if(!t) throw new Error('Test not found.');
-    if(await paidAccessBlocked(t,user)) throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
-    if(await attemptBlocked(t,user)) throw new Error('You have already attempted this test. Only one attempt is allowed for this test series.');
-    const b=await body(req);
-    const result=await calculateResult(t,b.answers||{},b.timeBySubject||{},true,user,false);
-    return send(res,200,result);
+  if(mTest&&method==='POST'&&mTest[2]==='submit'){
+    const {user}=await currentUser(req),tests=await allMap('tests'),t=tests[decodeURIComponent(mTest[1])];if(!t)throw new Error('Test not found.');
+    if(await paidAccessBlocked(t,user))throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
+    const b=await body(req),attemptId=String(b.attemptId||'').trim();if(!/^[A-Za-z0-9_-]{12,120}$/.test(attemptId))throw Object.assign(new Error('This exam session is invalid or expired. Please reopen the test.'),{status:400});
+    const submissionId='att-'+crypto.createHash('sha256').update(user.uid+'|'+t.id+'|'+attemptId).digest('hex').slice(0,40);
+    if(t.attemptPolicy==='once'&&user.role==='student'){
+      const lockPath='attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid);
+      if(db&&!useMemDb){const tx=await db.ref(lockPath).transaction(cur=>cur===null?{attemptId,submissionId,createdAt:nowIso()}:undefined,undefined,false);if(!tx.committed){const lock=tx.snapshot.val();if(lock?.submissionId===submissionId){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));}throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}}
+      else {const lock=await get(lockPath);if(lock){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}await set(lockPath,{attemptId,submissionId,createdAt:nowIso()});}
+    }
+    return send(res,200,await calculateResult(t,b.answers||{},b.timeBySubject||{},true,user,false,submissionId));
   }
 
-  if(url.pathname==='/api/tests' && method==='POST'){
+  if(url.pathname==='/api/tests'&&method==='POST'){
     const {user}=await requireRole(req,'teacher');
     const b=await body(req);
     const mods=await allMap('modules');
@@ -918,7 +840,7 @@ async function route(req, res) {
     await currentUser(req);
     const plans=Object.values(await allMap('plans'));
     const savedPayment=(await get('payment'))||DEFAULT_PAYMENT;
-    const payment={...savedPayment,gatewayUrl:savedPayment.gatewayUrl||process.env.PAYMENT_GATEWAY_URL||'',gatewayEnabled:CFG.payment.enabled,gatewayMode:CFG.payment.enabled?'test':null};
+    const payment={...savedPayment,gatewayUrl:'',gatewayEnabled:CFG.payment.enabled,gatewayMode:CFG.payment.enabled?'test':null};
     return send(res,200,{plans,payment});
   }
   if(url.pathname==='/api/plans'&&method==='POST'){
@@ -943,7 +865,7 @@ async function route(req, res) {
     await requireRole(req,'admin');
     const b=await body(req);
     const gatewayInput=b.gatewayUrl===undefined?process.env.PAYMENT_GATEWAY_URL||'':b.gatewayUrl;
-    const payment={upiId:String(b.upiId||'').trim(),payeeName:String(b.payeeName||'').trim(),note:String(b.note||'').trim(),gatewayUrl:String(gatewayInput).trim().replace(/\/+$/,'')};
+    const qr=String(b.qrDataUrl||'').trim();if(qr&&!/^data:image\/(png|jpe?g|webp);base64,/i.test(qr))throw new Error('UPI QR must be a PNG, JPG or WebP image.');if(qr.length>900000)throw new Error('UPI QR image is too large. Keep it under about 650 KB.');const payment={upiId:String(b.upiId||'').trim(),payeeName:String(b.payeeName||'').trim(),note:String(b.note||'').trim(),qrDataUrl:qr,gatewayUrl:''};
     await set('payment',payment);
     return send(res,200,{message:'Payment details saved.',payment});
   }
@@ -1107,7 +1029,7 @@ async function route(req, res) {
 
   if(url.pathname==='/api/admin/backup'&&method==='GET'){
     await requireRole(req,'admin');
-    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions'];
+    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks'];
     const out={}; for(const n of names) out[n]=await get(n);
     return send(res,200,out);
   }
@@ -1122,7 +1044,9 @@ async function route(req, res) {
   throw Object.assign(new Error('Not found.'),{status:404});
 }
 
-async function calculateResult(t, answers, timeBySubject, saveAttempt, user, solutionMode) {
+function publicRating(r){return r?{id:r.id,testId:r.testId,rating:r.rating,feedback:r.feedback||'',createdAt:r.createdAt,updatedAt:r.updatedAt}:null;}
+
+async function calculateResult(t, answers, timeBySubject, saveAttempt, user, solutionMode, submissionId) {
   let score=0,correct=0,incorrect=0,unattempted=0; const sectionMap={};
   const review=t.questions.map((q,i)=>{
     const given=answers[i]!==undefined?String(answers[i]).trim().toUpperCase():null; const subj=q.subject||'General';
@@ -1138,12 +1062,7 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
   });
   score=Math.round(score*100)/100; const maxScore=Math.round(t.questions.reduce((s,q)=>s+(Number(q.marks)||0),0)*100)/100; const attempted=correct+incorrect; const accuracy=attempted?Math.round(correct/attempted*1000)/10:0;
   const sections=Object.values(sectionMap).map(s=>({...s,score:Math.round(s.score*100)/100,maxScore:Math.round(s.maxScore*100)/100,accuracy:s.attempted?Math.round(s.correct/s.attempted*1000)/10:0,timeSeconds:Math.round(Number(timeBySubject[s.section]||0))}));
-  if(saveAttempt){
-    const subs=await allMap('submissions');
-    const s={id:uid('att-'),testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt:nowIso()};
-    subs[s.id]=s;
-    await set('submissions',subs);
-  }
+  if(saveAttempt){const id=submissionId||uid('att-');await set('submissions/'+id,{id,testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt:nowIso()});}
   const allScores=Object.values(await allMap('submissions')).filter(s=>s.testId===t.id).map(s=>Number(s.score)||0);
   const totalAttempts=allScores.length;
   const rank=allScores.filter(s=>s>score).length+1;
