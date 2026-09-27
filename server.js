@@ -195,6 +195,18 @@ const DEFAULT_PAYMENT = { upiId:'', payeeName:'', note:'', gatewayUrl: process.e
 
 const nowIso = () => new Date().toISOString();
 const uid = (prefix='') => prefix + Date.now().toString(36) + '-' + crypto.randomBytes(5).toString('hex');
+function encodeFirebaseKey(value){
+  return encodeURIComponent(String(value||'')).replace(/\./g,'%2E');
+}
+function encodeTimeBySubject(value){
+  const out={};
+  if(!value||typeof value!=='object'||Array.isArray(value))return out;
+  for(const [key,val] of Object.entries(value)){
+    const subject=String(key||'General').trim()||'General';
+    out[encodeFirebaseKey(subject)]=Number(val)||0;
+  }
+  return out;
+}
 const cleanEmail = v => String(v || '').trim().toLowerCase();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MOBILE_RE = /^[0-9+\-\s]{7,15}$/;
@@ -1084,10 +1096,11 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
     return {index:i,question:q.question,options:q.options,correctAnswer:q.answer,givenAnswer:given,outcome,explanation:q.explanation||''};
   });
   score=Math.round(score*100)/100; const maxScore=Math.round(t.questions.reduce((s,q)=>s+(Number(q.marks)||0),0)*100)/100; const attempted=correct+incorrect; const accuracy=attempted?Math.round(correct/attempted*1000)/10:0;
-  const sections=Object.values(sectionMap).map(s=>({...s,score:Math.round(s.score*100)/100,maxScore:Math.round(s.maxScore*100)/100,accuracy:s.attempted?Math.round(s.correct/s.attempted*1000)/10:0,timeSeconds:Math.round(Number(timeBySubject[s.section]||0))}));
+  const timeForSubject=(subject)=>{const raw=timeBySubject&&typeof timeBySubject==='object'?timeBySubject:{}; const direct=raw[subject]; if(direct!==undefined)return Number(direct)||0; const encoded=encodeFirebaseKey(subject); return Number(raw[encoded]||0)||0;};
+  const sections=Object.values(sectionMap).map(s=>({...s,score:Math.round(s.score*100)/100,maxScore:Math.round(s.maxScore*100)/100,accuracy:s.attempted?Math.round(s.correct/s.attempted*1000)/10:0,timeSeconds:Math.round(timeForSubject(s.section))}));
   if(saveAttempt){
     const id=submissionId||uid('att-'),submittedAt=nowIso();
-    const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt};
+    const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject:encodeTimeBySubject(timeBySubject),submittedAt};
     await multiUpdate({['submissions/'+id]:saved,['scoreIndex/'+t.id+'/'+id]:{score,userId:user.uid,submittedAt}});
   }
   const allScores=Object.values(await allMap('scoreIndex/'+t.id)).map(s=>Number(s.score)||0);
