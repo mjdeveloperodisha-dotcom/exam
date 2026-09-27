@@ -644,8 +644,9 @@ async function route(req, res) {
     if(!user)throw Object.assign(new Error('Invalid or expired reset request.'),{status:400});
     if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword))throw new Error('New password must contain at least 8 characters with uppercase, lowercase and a number.');
     const reset=await get('passwordResets/'+user.uid),hash=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(otp).digest('hex'),stored=String(reset?.hash||'');
-    if(!reset||Date.now()>Number(reset.expiresAt)||Number(reset.attempts||0)>=5||!/^\d{6}$/.test(otp)||stored.length!==hash.length||!crypto.timingSafeEqual(Buffer.from(hash),Buffer.from(stored)))throw Object.assign(new Error('Invalid or expired reset code.'),{status:400});
+    if(!reset||Date.now()>Number(reset.expiresAt)||Number(reset.attempts||0)>=5)throw Object.assign(new Error('Invalid or expired reset code.'),{status:400});
     reset.attempts=Number(reset.attempts||0)+1;await set('passwordResets/'+user.uid,reset);
+    if(!/^\d{6}$/.test(otp)||stored.length!==hash.length||!crypto.timingSafeEqual(Buffer.from(hash),Buffer.from(stored)))throw Object.assign(new Error('Invalid or expired reset code.'),{status:400});
     await set('users/'+user.uid,{...user,passwordHash:hashPassword(newPassword),updatedAt:nowIso()});await remove('passwordResets/'+user.uid);return send(res,200,{message:'Password reset successfully. You can now sign in.'});
   }
 
