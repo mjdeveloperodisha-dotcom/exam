@@ -809,7 +809,7 @@ async function route(req, res) {
       if(db&&!useMemDb){const tx=await db.ref(lockPath).transaction(cur=>cur===null?{attemptId,submissionId,createdAt:nowIso()}:undefined,undefined,false);if(!tx.committed){const lock=tx.snapshot.val();if(lock?.submissionId===submissionId){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));}throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}}
       else {const lock=await get(lockPath);if(lock){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}await set(lockPath,{attemptId,submissionId,createdAt:nowIso()});}
     }
-    return send(res,200,await calculateResult(t,b.answers||{},b.timeBySubject||{},true,user,false,submissionId));
+    try{return send(res,200,await calculateResult(t,b.answers||{},b.timeBySubject||{},true,user,false,submissionId));}catch(err){if(t.attemptPolicy==='once'&&user.role==='student')try{await remove('attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid));}catch(_){}throw err;}
   }
 
   if(url.pathname==='/api/tests'&&method==='POST'){
@@ -874,8 +874,7 @@ async function route(req, res) {
   if(url.pathname==='/api/payment-settings'&&method==='PUT'){
     await requireRole(req,'admin');
     const b=await body(req);
-    const gatewayInput=b.gatewayUrl===undefined?process.env.PAYMENT_GATEWAY_URL||'':b.gatewayUrl;
-    const qr=String(b.qrDataUrl||'').trim();if(qr&&!/^data:image\/(png|jpe?g|webp);base64,/i.test(qr))throw new Error('UPI QR must be a PNG, JPG or WebP image.');if(qr.length>900000)throw new Error('UPI QR image is too large. Keep it under about 650 KB.');const payment={upiId:String(b.upiId||'').trim(),payeeName:String(b.payeeName||'').trim(),note:String(b.note||'').trim(),qrDataUrl:qr,gatewayUrl:''};
+    const existing=(await get('payment'))||DEFAULT_PAYMENT;const qr=b.qrDataUrl===undefined?String(existing.qrDataUrl||'').trim():String(b.qrDataUrl||'').trim();if(qr&&!/^data:image\/(png|jpe?g|webp);base64,/i.test(qr))throw new Error('UPI QR must be a PNG, JPG or WebP image.');if(qr.length>900000)throw new Error('UPI QR image is too large. Keep it under about 650 KB.');const payment={upiId:String(b.upiId||'').trim(),payeeName:String(b.payeeName||'').trim(),note:String(b.note||'').trim(),qrDataUrl:qr,gatewayUrl:''};
     await set('payment',payment);
     return send(res,200,{message:'Payment details saved.',payment});
   }
