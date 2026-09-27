@@ -157,6 +157,7 @@ main{max-width:1240px;margin:auto;padding:30px 28px 44px}.section>h2{font-size:3
       <div class="form-row" style="flex:1"><label>Payee name</label><input id="admPayee"></div>
     </div>
     <div class="form-row"><label>Note for students (optional)</label><input id="admPayNote" placeholder="e.g. Add your registered email in the payment remark"></div>
+    <div class="form-row"><label>UPI QR Code</label><input type="file" id="admQrFile" accept="image/png,image/jpeg,image/webp" onchange="previewPaymentQr()"><img id="admQrPreview" class="logo-preview hidden" alt="UPI QR preview"><button type="button" class="secondary" onclick="removePaymentQr()">Remove QR</button><span class="muted">PNG/JPG/WebP, preferably under 650 KB.</span></div>
     <button class="primary-btn" onclick="savePaymentDetails()">Save payment details</button> <span id="admPayMsg" class="muted"></span>
     <h4 style="margin-top:20px">Plans</h4>
     <div class="table-wrap"><table><thead><tr><th>Plan</th><th>Days</th><th>Price</th><th>Action</th></tr></thead><tbody id="planTable"></tbody></table></div>
@@ -492,6 +493,7 @@ window.savePaymentDetails = async function(){
       upiId: document.getElementById('admUpi').value,
       payeeName: document.getElementById('admPayee').value,
       note: document.getElementById('admPayNote').value,
+      qrDataUrl: window._paymentQrDataUrl || '',
     });
     document.getElementById('admPayMsg').textContent = 'Saved ✓';
     await loadAdminSystemStatus();
