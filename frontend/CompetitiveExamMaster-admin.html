@@ -492,7 +492,6 @@ window.savePaymentDetails = async function(){
       upiId: document.getElementById('admUpi').value,
       payeeName: document.getElementById('admPayee').value,
       note: document.getElementById('admPayNote').value,
-      gatewayUrl: document.getElementById('admGateway').value
     });
     document.getElementById('admPayMsg').textContent = 'Saved ✓';
     await loadAdminSystemStatus();
