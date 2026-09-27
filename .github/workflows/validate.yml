@@ -1,0 +1,28 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check server.js
+      - name: Check inline browser JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for src in ["frontend/CompetitiveExamMaster-student.html","frontend/CompetitiveExamMaster-admin.html"]:
+              text=Path(src).read_text(encoding="utf-8")
+              scripts=re.findall(r"<script(?:\s[^>]*)?>([\s\S]*?)</script>",text,re.I)
+              Path("/tmp/"+Path(src).stem+".js").write_text("\n".join(scripts),encoding="utf-8")
+          PY
+          node --check /tmp/CompetitiveExamMaster-student.js
+          node --check /tmp/CompetitiveExamMaster-admin.js
