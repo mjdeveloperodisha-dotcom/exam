@@ -409,10 +409,12 @@ async function paidAccessBlocked(test, user) {
   return !purchases.some(p=>p.testId===test.id && p.studentId===user.uid && p.status==='approved');
 }
 
-async function attemptBlocked(test, user) {
-  if (test.attemptPolicy !== 'once' || user.role !== 'student') return false;
-  const submissions = Object.values(await allMap('submissions'));
-  return submissions.some(s=>s.testId===test.id && s.userId===user.uid);
+async function attemptBlocked(test,user){
+  if(test.attemptPolicy!=='once'||user.role!=='student')return false;
+  const locks=await allMap('attemptLocks/'+encodeURIComponent(test.id));
+  if(Object.prototype.hasOwnProperty.call(locks,encodeURIComponent(user.uid)))return true;
+  const scores=await allMap('scoreIndex/'+encodeURIComponent(test.id));
+  return Object.values(scores).some(x=>x.userId===user.uid);
 }
 
 async function body(req) {
