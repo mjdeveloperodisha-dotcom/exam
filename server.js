@@ -607,7 +607,7 @@ async function route(req, res) {
     return send(res,200,{message:'Login successful.',user:publicUser(user)});
   }
 
-  if(url.pathname==='/api/auth/logout'&&method==='POST'){clearSessionCookie(res);return send(res,200,{message:'Logged out.'});}
+  if(url.pathname==='/api/auth/logout'&&method==='POST'){clearSessionCookie(res,String(req.headers['x-cem-portal']||'').toLowerCase());return send(res,200,{message:'Logged out.'});}
 
   if (url.pathname==='/api/account/me' && method==='GET') {
     const {user}=await currentUser(req,['student','teacher']);
