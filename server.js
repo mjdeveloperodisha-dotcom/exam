@@ -1088,7 +1088,7 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
   if(saveAttempt){
     const id=submissionId||uid('att-'),submittedAt=nowIso();
     const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt};
-    await multiUpdate({'submissions/'+id:saved,'scoreIndex/'+t.id+'/'+id:{score,userId:user.uid,submittedAt}});
+    await multiUpdate({['submissions/'+id]:saved,['scoreIndex/'+t.id+'/'+id]:{score,userId:user.uid,submittedAt}});
   }
   const allScores=Object.values(await allMap('scoreIndex/'+t.id)).map(s=>Number(s.score)||0);
   const totalAttempts=allScores.length;
