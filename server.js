@@ -800,7 +800,7 @@ async function route(req, res) {
     return send(res,200,{message:t.attemptPolicy==='once'?'Students can attempt this test only once.':'Students can reattempt this test.',test:summarizeTest(t)});
   }
 
-  const mTest=url.pathname.match(/^\/api\/tests\/([^/]+)(?:\/(solution|submit))?$/);
+  const mTest=url.pathname.match(/^\/api\/tests\/([^/]+)(?:\/(solution|submit|start))?$/);
   if(mTest && method==='GET' && !mTest[2]) {
     const {user}=await currentUser(req), tests=await allMap('tests'), t=tests[decodeURIComponent(mTest[1])];
     if(!t||!t.published) throw new Error('Test not found.');
@@ -840,7 +840,7 @@ async function route(req, res) {
       if(db&&!useMemDb){const tx=await db.ref(lockPath).transaction(cur=>cur===null?{attemptId,submissionId,createdAt:nowIso()}:undefined,undefined,false);if(!tx.committed){const lock=tx.snapshot.val();if(lock?.submissionId===submissionId){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));}throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}}
       else {const lock=await get(lockPath);if(lock){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}await set(lockPath,{attemptId,submissionId,createdAt:nowIso()});}
     }
-    try{const result=await calculateResult(t,answers,timeBySubject,true,user,false,submissionId);examAttempt.status='submitted';examAttempt.submittedAt=nowIso();examAttempt.serverElapsedSeconds=Math.max(0,Math.min((now-examAttempt.startedAt?new Date(examAttempt.startedAt).getTime():now)/1000,(Number(t.duration)||30)*60));await update('examAttempts/'+attemptId,examAttempt);return send(res,200,result);}catch(err){if(t.attemptPolicy==='once'&&user.role==='student')try{await remove('attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid));}catch(_){}throw err;}
+    try{const result=await calculateResult(t,answers,timeBySubject,true,user,false,submissionId);examAttempt.status='submitted';examAttempt.submittedAt=nowIso();examAttempt.serverElapsedSeconds=Math.max(0,Math.min((now-new Date(examAttempt.startedAt).getTime())/1000,(Number(t.duration)||30)*60));await update('examAttempts/'+attemptId,examAttempt);return send(res,200,result);}catch(err){if(t.attemptPolicy==='once'&&user.role==='student')try{await remove('attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid));}catch(_){}throw err;}
   }
 
   if(url.pathname==='/api/tests'&&method==='POST'){
