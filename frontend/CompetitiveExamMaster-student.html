@@ -2034,11 +2034,7 @@ async function loadMyTests(){
 
 
 async function initializeAuthSession(){
-  if(localStorage.getItem('cem_explicit_login')!=='1'){
-    
-    
-  }
-  const user=await refreshUser();
+const user=await refreshUser();
   showSection('home');
   if(user?.role==='student')retryPendingGatewayPayment(true);
 }
