@@ -44,7 +44,7 @@ jobs:
               "Permissions-Policy","Cross-Origin-Opener-Policy","rateLimit(req,'api-global'",
               "/api/auth/csrf","examAttempts/","serverStartedAt","serverExpiresAt",
               "serverCalculated:true","razorpayApi('GET','/payments/'"
-          ]
+          ]:
               assert marker in server, f"missing server security marker: {marker}"
           for marker in ["getCsrfToken()","X-CSRF-Token","/start',{}"]:
               assert marker in student, f"missing student security marker: {marker}"
