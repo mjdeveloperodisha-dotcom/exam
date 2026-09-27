@@ -563,7 +563,6 @@ async function route(req, res) {
     setSessionCookie(res,createAdminSession(adminUid));
     return send(res,200,{
       message:'Admin login successful.',
-      sessionToken:createAdminSession(adminUid),
       user:{uid:adminUid,name:CFG.admin.name,email:CFG.admin.email,role:'admin',status:'approved',blocked:false}
     });
   }
@@ -704,7 +703,6 @@ async function route(req, res) {
     if(!u) throw new Error('User not found.');
     if(u.role==='admin') throw new Error("Admin accounts can't be deleted.");
     await remove('users/'+id);
-    if (auth) { try{ await auth.deleteUser(id); }catch(_){} }
     return send(res,200,{message:'User deleted.'});
   }
 
