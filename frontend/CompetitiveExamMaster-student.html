@@ -574,126 +574,20 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 <script>
 
-let cemAuth = null;
-function loadScript(src){return new Promise((resolve,reject)=>{if(document.querySelector('script[src="'+src+'"]'))return resolve();const s=document.createElement('script');s.src=src;s.async=false;s.onload=resolve;s.onerror=()=>reject(new Error('Network error loading security components.'));document.head.appendChild(s);});}
-const firebaseReady=(async()=>{
-  const cfgRes=await fetch('/api/config');
-  if(!cfgRes.ok)throw new Error('Service temporarily unavailable. Please try again.');
-  const cfg=await cfgRes.json();
-  if (cfg.firebase && cfg.firebase.apiKey) {
-    try {
-      await loadScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
-      await loadScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js');
-      if(window.firebase && !firebase.apps.length) firebase.initializeApp(cfg.firebase);
-      if(window.firebase){
-        cemAuth=firebase.auth();
-        if(cemAuth.onAuthStateChanged)await new Promise(resolve=>{
-          let unsubscribe=null,settled=false;
-          const timer=window.setTimeout(finish,4000);
-          function finish(){if(settled)return;settled=true;window.clearTimeout(timer);unsubscribe?.();resolve();}
-          unsubscribe=cemAuth.onAuthStateChanged(finish,finish);
-          if(settled)unsubscribe();
-        });
-      }
-    } catch(err) {
-      console.warn('Auth fallback:', err.message);
-    }
-  }
-  return cfg;
-})();
-function ensureAdmin(){}
-async function getIdToken(options={}){
-  await firebaseReady;
-  if(options.firebaseAuth){
-    const u=cemAuth&&cemAuth.currentUser;
-    if(!u)throw new Error('Your login session is not ready. Please try again.');
-    if(u)localStorage.removeItem('cem_session');
-    return u ? u.getIdToken() : null;
-  }
-  const adminSession = localStorage.getItem('cem_admin_session');
-  if (adminSession) return adminSession;
-  if(localStorage.getItem('cem_explicit_login')!=='1'){
-    localStorage.removeItem('cem_session');
-    return null;
-  }
-  if(cemAuth && cemAuth.app && cemAuth.app.options && cemAuth.app.options.apiKey){
-    const u=cemAuth.currentUser;
-    return u ? u.getIdToken() : null;
-  }
-  return localStorage.getItem('cem_session');
+const firebaseReady=Promise.resolve();
+async function api(method,url,body){
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
+  const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;
 }
-async function api(method,url,body,options={}){await firebaseReady;const headers={'Content-Type':'application/json'};const token=options.anonymous?null:await getIdToken(options);if(token)headers.Authorization='Bearer '+token;const r=await fetch(url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;}
 function esc(value){const s=String(value??'');return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function msg(id,text,ok=false){const el=document.getElementById(id);if(!el)return;el.textContent=String(text||'');el.className=ok?'success':'error';}
-function authError(e){
-  const code = String((e && e.code) || '').toLowerCase();
-  const msgText = String((e && e.message) || '');
-  if (code.includes('invalid-credential') || code.includes('wrong-password') || code.includes('user-not-found') || msgText.toLowerCase().includes('invalid-credential') || msgText.toLowerCase().includes('wrong-password') || msgText.toLowerCase().includes('user-not-found')) {
-    return 'Incorrect email or password. Please try again.';
-  }
-  if (code.includes('email-already-in-use') || msgText.toLowerCase().includes('email-already-in-use')) {
-    return 'An account with this email already exists.';
-  }
-  if (code.includes('invalid-email') || msgText.toLowerCase().includes('invalid-email')) {
-    return 'Please enter a valid email address.';
-  }
-  if (code.includes('weak-password') || msgText.toLowerCase().includes('weak-password')) {
-    return 'Password must contain at least 6 characters.';
-  }
-  if (code.includes('too-many-requests') || msgText.toLowerCase().includes('too-many-requests')) {
-    return 'Too many attempts. Please wait a few moments and try again.';
-  }
-  if (code.includes('network') || msgText.toLowerCase().includes('network')) {
-    return 'Network connection issue. Please check your internet connection.';
-  }
-  let clean = msgText.replace(/Firebase:?\s*/gi, '').replace(/\(auth\/[^)]+\)/gi, '').replace(/database/gi, 'system').trim();
-  return clean || 'Incorrect password or server error. Please try again.';
-}
-async function registerFirebaseAccount(kind,data){
-  await firebaseReady;
-  localStorage.removeItem('cem_session');
-  localStorage.removeItem('cem_admin_session');
-  localStorage.removeItem('cem_explicit_login');
-  if(cemAuth?.currentUser)try{await cemAuth.signOut();}catch(_){}
-  currentUser=null;
-  updateUI();
-  if (!cemAuth || !cemAuth.app || !cemAuth.app.options || !cemAuth.app.options.apiKey) {
-    return api('POST','/api/auth/register/'+kind,data,{anonymous:true});
-  }
-  const cred=await cemAuth.createUserWithEmailAndPassword(data.email,data.password);
-  let r;
-  try{
-    await cred.user.updateProfile({displayName:data.name});
-    r=await api('POST','/api/auth/register/'+kind,data,{firebaseAuth:true});
-    try{await cred.user.sendEmailVerification();}catch(_){}
-  }catch(e){try{await cred.user.delete();}catch(_){}throw e;}
-  try{await cemAuth.signOut();}catch(_){}
-  currentUser=null;
-  updateUI();
-  return r;
-}
-async function firebaseLogin(email,password){
-  await firebaseReady;
-  localStorage.removeItem('cem_session');
-  localStorage.removeItem('cem_admin_session');
-  localStorage.removeItem('cem_explicit_login');
-  if(cemAuth?.currentUser)try{await cemAuth.signOut();}catch(_){}
-  if (!cemAuth || !cemAuth.app || !cemAuth.app.options || !cemAuth.app.options.apiKey) {
-    const r=await api('POST','/api/auth/login',{email,password},{anonymous:true});
-    if(r.sessionToken) localStorage.setItem('cem_session', r.sessionToken);
-    return r;
-  }
-  await cemAuth.signInWithEmailAndPassword(email,password);
-  try{return await api('POST','/api/auth/login',{email},{firebaseAuth:true});}catch(e){await cemAuth.signOut();throw e;}
-}
-async function firebaseReauth(password){
-  await firebaseReady;
-  const u=cemAuth&&cemAuth.currentUser;
-  if(!u||!u.email) return;
-  await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email,password));
-}
+function authError(e){return String((e&&e.message)||'Unable to complete the request.');}
+async function registerFirebaseAccount(kind,data){return api('POST','/api/auth/register/'+kind,data);}
+async function firebaseLogin(email,password){return api('POST','/api/auth/login',{email,password});}
+async function firebaseReauth(){return true;}
 let currentUser = null;
 let activeCategory = null;
+
 
 function showSection(id){
   document.querySelectorAll('main>section').forEach(s=>s.classList.add('hidden'));
@@ -794,10 +688,10 @@ async function refreshUser(){
   try{
     const { user } = await api('GET','/api/auth/me');
     if(!user){
-      localStorage.removeItem('cem_session');
-      localStorage.removeItem('cem_admin_session');
-      localStorage.removeItem('cem_explicit_login');
-      if(cemAuth?.currentUser)try{await cemAuth.signOut();}catch(_){}
+      
+      
+      
+      
     }
     currentUser = user;
     updateUI();
@@ -844,9 +738,9 @@ window.registerTeacher = async function(){
   try{
     const body={name:document.getElementById('teacherName').value.trim(),mobile:document.getElementById('teacherMobile').value.trim(),email,subject:document.getElementById('teacherSubject').value.trim(),password};
     const r=await registerFirebaseAccount('teacher',body);
-    if(cemAuth?.currentUser)try{await cemAuth.signOut();}catch(_){}
-    localStorage.removeItem('cem_session');
-    localStorage.removeItem('cem_admin_session');
+    
+    
+    
     currentUser=null;
     updateUI();
     msg('teacherMsg',r.message,true);
@@ -862,8 +756,8 @@ window.loginUser = async function(){
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
     if(!email||!password)throw new Error('Enter your email and password to sign in.');
-    localStorage.removeItem('cem_session');
-    localStorage.removeItem('cem_explicit_login');
+    
+    
     if(cemAuth?.currentUser)await cemAuth.signOut();
     currentUser=null;
     updateUI();
@@ -899,17 +793,7 @@ window.loginUser = async function(){
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 
-window.logout = async function(){
-  localStorage.removeItem('cem_session');
-  localStorage.removeItem('cem_admin_session');
-  localStorage.removeItem('cem_explicit_login');
-  if (cemAuth) try { await cemAuth.signOut(); } catch(_) {}
-  try { await api('POST','/api/auth/logout'); } catch(_) {}
-  currentUser = null;
-  updateUI();
-  { const m=document.getElementById('loginMsg'); if(m) m.textContent=''; const pw=document.getElementById('loginPassword'); if(pw && !document.getElementById('rememberLogin')?.checked) pw.value=''; }
-  showSection('home');
-};
+window.logout=async function(){try{await api('POST','/api/auth/logout');}catch(_){}currentUser=null;updateUI();showSection('home');};
 
 function updateUI(){
   ['adminNav','teacherNav','logoutNav','accountNav','premiumNav'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
@@ -928,7 +812,18 @@ function updateUI(){
 
 
 window.toggleForgot=function(){document.getElementById('forgotBox').classList.toggle('hidden');};
-window.requestPasswordReset=async function(){try{await firebaseReady;const email=document.getElementById('forgotEmail').value.trim();if(!email)throw new Error('Enter your email address.');if(!cemAuth||!cemAuth.sendPasswordResetEmail)throw new Error('Password reset is unavailable until Firebase Authentication is configured.');await cemAuth.sendPasswordResetEmail(email,{url:location.origin+location.pathname});msg('forgotMsg','If the account exists, a password reset link has been sent. Check your inbox and spam folder.',true);}catch(e){msg('forgotMsg',authError(e));}};
+window.requestPasswordReset=async function(){
+  try{
+    const email=document.getElementById('forgotEmail').value.trim();if(!email)throw new Error('Enter your email address.');
+    const r=await api('POST','/api/auth/forgot/request',{email});
+    document.getElementById('forgotBox').innerHTML='<div class="form-row"><label>Reset code</label><input id="forgotOtp" inputmode="numeric" maxlength="6" placeholder="6-digit code"></div><div class="form-row"><label>New password</label><input id="forgotNewPassword" type="password" placeholder="At least 8 characters"></div><button class="secondary" onclick="confirmPasswordReset()">Reset Password</button><p id="forgotMsg"></p>';
+    msg('forgotMsg',r.message,true);
+  }catch(e){msg('forgotMsg',authError(e));}
+};
+window.confirmPasswordReset=async function(){
+  try{const email=document.getElementById('forgotEmail').value.trim(),otp=document.getElementById('forgotOtp').value.trim(),newPassword=document.getElementById('forgotNewPassword').value;const r=await api('POST','/api/auth/forgot/confirm',{email,otp,newPassword});msg('forgotMsg',r.message,true);}
+  catch(e){msg('forgotMsg',authError(e));}
+};
 
 
 async function loadAccount(){
@@ -954,37 +849,13 @@ window.saveAccount = async function(){
   }catch(e){ msg('acctMsg', e.message); }
 };
 window.changeEmail=async function(){
-  try{
-    const newEmail=document.getElementById('emailNew').value.trim(),currentPassword=document.getElementById('emailPwCurrent').value;
-    if(!newEmail||!currentPassword)throw new Error('New email and current password are required.');
-    let r;
-    if(cemAuth&&cemAuth.currentUser){
-      await firebaseReauth(currentPassword);
-      await cemAuth.currentUser.updateEmail(newEmail);
-      await cemAuth.currentUser.getIdToken(true);
-      r=await api('PUT','/api/account/me',{name:currentUser.name,mobile:currentUser.mobile,subject:currentUser.subject});
-    }else{
-      r=await api('PUT','/api/account/email',{email:newEmail,currentPassword});
-      if(r.sessionToken)localStorage.setItem('cem_session',r.sessionToken);
-    }
-    currentUser=r.user;updateUI();
-    if(document.getElementById('rememberLogin').checked)localStorage.setItem('cem_saved_login',JSON.stringify({e:newEmail}));
-    else localStorage.removeItem('cem_saved_login');
-    msg('emailMsg','Login email changed successfully.',true);
-    document.getElementById('emailNew').value='';document.getElementById('emailPwCurrent').value='';
-  }catch(e){msg('emailMsg',authError(e));}
+  try{const newEmail=document.getElementById('emailNew').value.trim(),currentPassword=document.getElementById('emailPwCurrent').value;if(!newEmail||!currentPassword)throw new Error('New email and current password are required.');const r=await api('PUT','/api/account/email',{email:newEmail,currentPassword});currentUser=r.user;updateUI();msg('emailMsg','Login email changed successfully.',true);document.getElementById('emailNew').value='';document.getElementById('emailPwCurrent').value='';}
+  catch(e){msg('emailMsg',authError(e));}
 };
 window.changePassword=async function(){
   const newPassword=document.getElementById('pwNew').value,confirmPassword=document.getElementById('pwConfirm').value,currentPassword=document.getElementById('pwCurrent').value;
-  if(newPassword!==confirmPassword){msg('pwMsg','Passwords do not match.');return;}
-  if(newPassword.length<6){msg('pwMsg','New password must contain at least 6 characters.');return;}
-  if(!currentPassword){msg('pwMsg','Enter your current password.');return;}
-  try{
-    if(cemAuth&&cemAuth.currentUser){await firebaseReauth(currentPassword);await cemAuth.currentUser.updatePassword(newPassword);}
-    else await api('PUT','/api/account/password',{currentPassword,newPassword});
-    msg('pwMsg','Password changed successfully.',true);
-    ['pwCurrent','pwNew','pwConfirm'].forEach(id=>document.getElementById(id).value='');
-  }catch(e){msg('pwMsg',authError(e));}
+  if(newPassword!==confirmPassword){msg('pwMsg','Passwords do not match.');return;}if(newPassword.length<8){msg('pwMsg','New password must contain at least 8 characters.');return;}if(!currentPassword){msg('pwMsg','Enter your current password.');return;}
+  try{await api('PUT','/api/account/password',{currentPassword,newPassword});msg('pwMsg','Password changed successfully.',true);['pwCurrent','pwNew','pwConfirm'].forEach(id=>document.getElementById(id).value='');}catch(e){msg('pwMsg',authError(e));}
 };
 
 
@@ -1351,14 +1222,6 @@ async function loadPremium(){
     let gatewayReady = payment.gatewayEnabled === true;
     let gatewayError = '';
     const hasManualUpi=!!String(payment.upiId||'').trim();
-    if(payment.gatewayUrl){
-      try{
-        const remote = await gw(payment.gatewayUrl,'/api/plans');
-        if(Array.isArray(remote.plans)) plans = remote.plans;
-        gatewayReady = remote.paymentsEnabled === true;
-        if(!gatewayReady) gatewayError = 'Razorpay Test Mode is not configured on the payment server.';
-      }catch(e){ gatewayReady = false; gatewayError = 'Online payment is unavailable right now. Please contact the administrator.'; }
-    }
     if(!gatewayReady&&!gatewayError)gatewayError=hasManualUpi
       ? 'Razorpay Test Mode is unavailable; manual UPI payment is available below.'
       : 'No payment method is configured yet. Please contact the administrator.';
@@ -1384,14 +1247,7 @@ async function loadPremium(){
     </tbody></table></div>` : '<p class="muted">No payments yet.</p>';
   }catch(e){ status.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
 }
-async function gw(base,path,body){await firebaseReady;const token=await getIdToken();const headers={'Content-Type':'application/json'};if(token)headers.Authorization='Bearer '+token;const url=String(base||'').replace(/\/+$/,'')+path;const r=await fetch(url,{method:body?'POST':'GET',headers,body:body?JSON.stringify(body):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Payment server error.');return j;}
-function readPendingGatewayPayment(){
-  try{
-    const saved=JSON.parse(sessionStorage.getItem('cem_pending_gateway_payment')||'null');
-    if(saved&&Date.now()-Number(saved.savedAt)>7*86400000){sessionStorage.removeItem('cem_pending_gateway_payment');return null;}
-    return saved;
-  }catch(_){return null;}
-}
+async function gw(base,path,body){return api(body?'POST':'GET',path,body);}
 function currentUserId(){return currentUser?.uid||currentUser?.id||'';}
 function savePendingGatewayPayment(response,base){
   try{sessionStorage.setItem('cem_pending_gateway_payment',JSON.stringify({studentId:currentUserId(),gatewayUrl:base,response,savedAt:Date.now()}));}catch(_){}
@@ -1777,7 +1633,7 @@ window.submitTest = async function(){
     trackTimeSpent();
     clearInterval(tbTimerInterval);
     exitExamFullscreen();
-    const r = await api('POST', '/api/tests/'+encodeURIComponent(activeTest.id)+'/submit', { answers: activeAnswers, timeBySubject: activeTimeBySubject });
+    const r = await api('POST', '/api/tests/'+encodeURIComponent(activeTest.id)+'/submit', { attemptId: activeTest.attemptId, answers: activeAnswers, timeBySubject: activeTimeBySubject });
     showResultScreen(r);
   }catch(e){ alert(e.message); }
 };
@@ -2165,8 +2021,8 @@ async function loadMyTests(){
 async function initializeAuthSession(){
   await firebaseReady;
   if(localStorage.getItem('cem_explicit_login')!=='1'){
-    localStorage.removeItem('cem_session');
-    if(cemAuth?.currentUser)try{await cemAuth.signOut();}catch(_){}
+    
+    
   }
   const user=await refreshUser();
   showSection('home');
