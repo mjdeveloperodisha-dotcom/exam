@@ -240,8 +240,17 @@ function msg(id,text,ok=false){
   }
 }
 
+async function getCsrfToken(){
+  if(window.__cemCsrfToken) return window.__cemCsrfToken;
+  const r=await fetch('/api/auth/csrf',{method:'GET',credentials:'same-origin',cache:'no-store'});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok||!data.csrfToken) throw new Error('Security token initialization failed. Refresh the page.');
+  window.__cemCsrfToken=data.csrfToken; return data.csrfToken;
+}
 async function api(method,url,body){
-  const r=await fetch(url,{method,headers:{'Content-Type':'application/json','X-CEM-Portal':'admin'},credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
+  const headers={'Content-Type':'application/json','X-CEM-Portal':'admin'};
+  if(method!=='GET'&&method!=='HEAD'&&method!=='OPTIONS') headers['X-CSRF-Token']=await getCsrfToken();
+  const r=await fetch(url,{method,headers,credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(cleanErrorMessage(data.error||data.message||'Request failed.'));return data;
 }
 
