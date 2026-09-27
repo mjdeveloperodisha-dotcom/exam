@@ -166,6 +166,11 @@ async function update(pathName, value) {
   memUpdate(pathName, value);
 }
 
+async function multiUpdate(values){
+  if(!values||typeof values!=='object')return;
+  if(!useMemDb&&db){try{await db.ref().update(values);}catch(err){console.error('[DB Error] Multi-update failed:',err.message);throw Object.assign(new Error('Data storage is temporarily unavailable. No changes were saved.'),{status:503});}return;}
+  for(const [p,v] of Object.entries(values)){if(v===null)memRemove(p);else memSet(p,v);}
+}
 async function remove(pathName) {
   if (!useMemDb && db) {
     try { await db.ref(pathName).remove(); }
@@ -258,6 +263,11 @@ async function ensureSeeds() {
   if (!(await get('ratings'))) await set('ratings', {});
   if (!(await get('attemptLocks'))) await set('attemptLocks', {});
   if (!(await get('passwordResets'))) await set('passwordResets', {});
+  if (!(await get('scoreIndex'))) {
+    const subs=await allMap('submissions'),idx={};
+    for(const x of Object.values(subs)){if(!x?.testId||!x?.id)continue;(idx[x.testId] ||= {})[x.id]={score:Number(x.score)||0,userId:x.userId||'',submittedAt:x.submittedAt||nowIso()};}
+    await set('scoreIndex',idx);
+  }
 }
 
 const AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('hex'));
@@ -414,7 +424,7 @@ async function body(req) {
   });
 }
 
-function setSessionCookie(res,token){res.setHeader('Set-Cookie','cem_session='+encodeURIComponent(token)+'; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200');}
+function setSessionCookie(res,token){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';res.setHeader('Set-Cookie','cem_session='+encodeURIComponent(token)+'; Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=43200');}
 function clearSessionCookie(res){res.setHeader('Set-Cookie','cem_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0');}
 function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'",'Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.end(JSON.stringify(data));}
 
@@ -1046,7 +1056,7 @@ async function route(req, res) {
 
   if(url.pathname==='/api/admin/backup'&&method==='GET'){
     await requireRole(req,'admin');
-    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks'];
+    const names=['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','scoreIndex'];
     const out={}; for(const n of names) out[n]=await get(n);
     return send(res,200,out);
   }
@@ -1054,7 +1064,7 @@ async function route(req, res) {
     await requireRole(req,'admin');
     const b=await body(req);
     if(!b.users||!b.tests) throw new Error('Backup is missing users/tests.');
-    for(const n of ['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions']) if(b[n]!==undefined) await set(n,b[n]);
+    for(const n of ['users','tests','purchases','subscriptions','plans','payment','modules','settings','submissions','ratings','attemptLocks','scoreIndex']) if(b[n]!==undefined) await set(n,b[n]);
     return send(res,200,{message:'Restore complete.'});
   }
 
@@ -1079,8 +1089,12 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
   });
   score=Math.round(score*100)/100; const maxScore=Math.round(t.questions.reduce((s,q)=>s+(Number(q.marks)||0),0)*100)/100; const attempted=correct+incorrect; const accuracy=attempted?Math.round(correct/attempted*1000)/10:0;
   const sections=Object.values(sectionMap).map(s=>({...s,score:Math.round(s.score*100)/100,maxScore:Math.round(s.maxScore*100)/100,accuracy:s.attempted?Math.round(s.correct/s.attempted*1000)/10:0,timeSeconds:Math.round(Number(timeBySubject[s.section]||0))}));
-  if(saveAttempt){const id=submissionId||uid('att-');await set('submissions/'+id,{id,testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt:nowIso()});}
-  const allScores=Object.values(await allMap('submissions')).filter(s=>s.testId===t.id).map(s=>Number(s.score)||0);
+  if(saveAttempt){
+    const id=submissionId||uid('att-'),submittedAt=nowIso();
+    const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject,submittedAt};
+    await multiUpdate({'submissions/'+id:saved,'scoreIndex/'+t.id+'/'+id:{score,userId:user.uid,submittedAt}});
+  }
+  const allScores=Object.values(await allMap('scoreIndex/'+t.id)).map(s=>Number(s.score)||0);
   const totalAttempts=allScores.length;
   const rank=allScores.filter(s=>s>score).length+1;
   const below=allScores.filter(s=>s<score).length;
