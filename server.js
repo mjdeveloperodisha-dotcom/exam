@@ -271,6 +271,7 @@ async function ensureSeeds() {
 }
 
 const AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('hex'));
+const ADMIN_OTP_SECRET = process.env.ADMIN_OTP_SECRET || AUTH_SESSION_SECRET;
 if (process.env.NODE_ENV === 'production' && AUTH_SESSION_SECRET.length < 32) throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
 const ADMIN_OTP_TTL_MS = 10 * 60 * 1000;
 const adminOtpState = { hash:'', expiresAt:0, attempts:0, sentAt:0 };
@@ -280,7 +281,7 @@ function rateLimit(req,key,limit,windowMs){const k=key+':'+clientIp(req),now=Dat
 setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
 
 function hashAdminOtp(otp) {
-  return crypto.createHmac('sha256', AUTH_SESSION_SECRET).update(String(otp)).digest('hex');
+  return crypto.createHmac('sha256', ADMIN_OTP_SECRET).update(String(otp)).digest('hex');
 }
 
 function createAdminSession(uidValue) {
@@ -592,6 +593,7 @@ async function route(req, res) {
     const b=await body(req),email=cleanEmail(b.email),password=String(b.password||'');if(!EMAIL_RE.test(email)||!password)throw Object.assign(new Error('Invalid email or password.'),{status:401});
     const users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
     if(!user||!passwordMatches(password,user))throw Object.assign(new Error('Invalid email or password.'),{status:401});
+    if(user.password&&!user.passwordHash){const upgraded={...user,passwordHash:hashPassword(password),updatedAt:nowIso()};delete upgraded.password;await set('users/'+user.uid,upgraded);Object.assign(user,upgraded);}
     if(user.blocked)throw Object.assign(new Error('Your account has been blocked. Contact the administrator.'),{status:403});
     if(user.role==='teacher'&&user.status!=='approved')throw Object.assign(new Error('Teacher account is pending Admin approval.'),{status:403});
     setSessionCookie(res,createUserSession(user.uid,user.email,user.role,user.name));
