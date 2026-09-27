@@ -574,7 +574,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 
 <script>
 
-const firebaseReady=Promise.resolve();
 async function api(method,url,body){
   const r=await fetch(url,{method,headers:{'Content-Type':'application/json','X-CEM-Portal':'student'},credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
   const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;
@@ -582,9 +581,8 @@ async function api(method,url,body){
 function esc(value){const s=String(value??'');return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function msg(id,text,ok=false){const el=document.getElementById(id);if(!el)return;el.textContent=String(text||'');el.className=ok?'success':'error';}
 function authError(e){return String((e&&e.message)||'Unable to complete the request.');}
-async function registerFirebaseAccount(kind,data){return api('POST','/api/auth/register/'+kind,data);}
-async function firebaseLogin(email,password){return api('POST','/api/auth/login',{email,password});}
-async function firebaseReauth(){return true;}
+async function registerAccount(kind,data){return api('POST','/api/auth/register/'+kind,data);}
+async function loginAccount(email,password){return api('POST','/api/auth/login',{email,password});}
 let currentUser = null;
 let activeCategory = null;
 
@@ -714,7 +712,7 @@ window.registerStudent = async function(){
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
     const body={name:document.getElementById('studentName').value.trim(),mobile:document.getElementById('studentMobile').value.trim(),email,password};
-    const r=await registerFirebaseAccount('student',body);
+    const r=await registerAccount('student',body);
     msg('studentMsg',r.message,true);
     ['studentName','studentMobile','studentEmail','studentPassword','studentConfirmPassword'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     document.getElementById('loginEmail').value=email;
@@ -737,7 +735,7 @@ window.registerTeacher = async function(){
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
     const body={name:document.getElementById('teacherName').value.trim(),mobile:document.getElementById('teacherMobile').value.trim(),email,subject:document.getElementById('teacherSubject').value.trim(),password};
-    const r=await registerFirebaseAccount('teacher',body);
+    const r=await registerAccount('teacher',body);
     
     
     
@@ -760,8 +758,7 @@ window.loginUser = async function(){
     
     currentUser=null;
     updateUI();
-    const r = await firebaseLogin(email,password);
-    localStorage.setItem('cem_explicit_login','1');
+    const r = await loginAccount(email,password);
     currentUser = r.user;
     try{
       if(document.getElementById('rememberLogin').checked){
@@ -2037,7 +2034,6 @@ async function loadMyTests(){
 
 
 async function initializeAuthSession(){
-  await firebaseReady;
   if(localStorage.getItem('cem_explicit_login')!=='1'){
     
     
