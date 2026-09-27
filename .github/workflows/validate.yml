@@ -35,6 +35,12 @@ jobs:
           student=Path("frontend/CompetitiveExamMaster-student.html").read_text(encoding="utf-8")
           admin=Path("frontend/CompetitiveExamMaster-admin.html").read_text(encoding="utf-8")
           for marker in [
+              "const locks=(await allMap('attemptLocks/'",
+              "const scores=(await allMap('scoreIndex/'",
+              "Object.values((await allMap('scoreIndex/'+t.id))||{})",
+              "'examAttempts'",
+              "'webhookEvents'",
+          for marker in [
               "validateCsrf(req)","X-CSRF-Token","Strict-Transport-Security",
               "Permissions-Policy","Cross-Origin-Opener-Policy","rateLimit(req,'api-global'",
               "/api/auth/csrf","examAttempts/","serverStartedAt","serverExpiresAt",
