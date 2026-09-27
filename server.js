@@ -431,7 +431,7 @@ async function body(req) {
 }
 
 function setSessionCookie(res,token){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';res.setHeader('Set-Cookie','cem_session='+encodeURIComponent(token)+'; Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=43200');}
-function clearSessionCookie(res){res.setHeader('Set-Cookie','cem_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0');}
+function clearSessionCookie(res){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';res.setHeader('Set-Cookie','cem_session=; Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=0');}
 function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'",'Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.end(JSON.stringify(data));}
 
 function errorStatus(e){ return Number(e.status)||500; }
