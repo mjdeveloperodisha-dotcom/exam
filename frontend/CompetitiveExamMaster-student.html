@@ -815,7 +815,7 @@ window.requestPasswordReset=async function(){
   try{
     const email=document.getElementById('forgotEmail').value.trim();if(!email)throw new Error('Enter your email address.');
     const r=await api('POST','/api/auth/forgot/request',{email});
-    document.getElementById('forgotBox').innerHTML='<div class="form-row"><label>Reset code</label><input id="forgotOtp" inputmode="numeric" maxlength="6" placeholder="6-digit code"></div><div class="form-row"><label>New password</label><input id="forgotNewPassword" type="password" placeholder="At least 8 characters"></div><button class="secondary" onclick="confirmPasswordReset()">Reset Password</button><p id="forgotMsg"></p>';
+    document.getElementById('forgotBox').innerHTML='<input id="forgotEmail" type="hidden" value="'+esc(email)+'"><div class="form-row"><label>Reset code</label><input id="forgotOtp" inputmode="numeric" maxlength="6" placeholder="6-digit code"></div><div class="form-row"><label>New password</label><input id="forgotNewPassword" type="password" placeholder="At least 8 characters"></div><button class="secondary" onclick="confirmPasswordReset()">Reset Password</button><p id="forgotMsg"></p>';
     msg('forgotMsg',r.message,true);
   }catch(e){msg('forgotMsg',authError(e));}
 };
