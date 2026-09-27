@@ -436,7 +436,7 @@ async function loadAdminSystemStatus(){
         gatewayReady=response.ok&&remote.paymentsEnabled===true;
       }catch(_){}
     }
-    const paymentText=gatewayReady?'Razorpay Test Mode is ready for trial payments.':payment?.upiId?'Razorpay Test Mode is not ready; students can pay by the saved UPI ID.':'No payment method is ready. Add Razorpay Test Mode keys on the built-in or separate payment server, or save a UPI ID below.';
+    const paymentText=gatewayReady?'Razorpay Test Mode is ready for trial payments.':payment?.upiId?'Razorpay Test Mode is not ready; students can pay by the saved UPI ID.':'No payment method is ready. Add Razorpay Test Mode keys to the server environment, or save a UPI ID below.';
     box.textContent=storageText+' '+paymentText;
     box.className='panel-card '+(storagePersistent&&paymentEnabled?'success':'muted');
   }catch(e){box.textContent='Could not check data storage and payment readiness: '+e.message;}
