@@ -280,7 +280,8 @@ const ADMIN_OTP_TTL_MS = 10 * 60 * 1000;
 const adminOtpState = { hash:'', expiresAt:0, attempts:0, sentAt:0 };
 const rateBuckets = new Map();
 function clientIp(req){ return String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().slice(0,80); }
-function rateLimit(req,key,limit,windowMs){const k=key+':'+clientIp(req),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
+function rateKeyPart(value){ return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,32); }
+function rateLimit(req,key,limit,windowMs,identity=''){const k=key+':'+clientIp(req)+':'+rateKeyPart(identity),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
 setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
 
 function hashAdminOtp(otp) {
@@ -431,10 +432,17 @@ async function body(req) {
   });
 }
 
-function cookieBase(res){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';return 'Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=43200';}
+function isHttps(req){return process.env.NODE_ENV==='production'||String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()==='https';}
+function cookieBase(res){return 'Path=/; HttpOnly; '+(isHttps(res.req)?'Secure; ':'')+'SameSite=Strict; Max-Age=43200';}
 function setSessionCookie(res,token,portal){const name=portal==='admin'?'cem_admin_session':'cem_user_session';res.setHeader('Set-Cookie',name+'='+encodeURIComponent(token)+'; '+cookieBase(res));}
-function clearSessionCookie(res,portal){const secure=process.env.NODE_ENV==='production'||String(res.req?.headers?.['x-forwarded-proto']||'').split(',')[0].trim()==='https';const base='Path=/; HttpOnly; '+(secure?'Secure; ':'')+'SameSite=Strict; Max-Age=0';const names=portal==='admin'?['cem_admin_session']:portal==='student'?['cem_user_session']:['cem_admin_session','cem_user_session'];res.setHeader('Set-Cookie',names.map(n=>n+'=; '+base));}
-function send(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'",'Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.end(JSON.stringify(data));}
+function clearSessionCookie(res,portal){const base='Path=/; HttpOnly; '+(isHttps(res.req)?'Secure; ':'')+'SameSite=Strict; Max-Age=0';const names=portal==='admin'?['cem_admin_session']:portal==='student'?['cem_user_session']:['cem_admin_session','cem_user_session'];res.setHeader('Set-Cookie',names.map(n=>n+'=; '+base));}
+function csrfCookieBase(req){return 'Path=/; '+(isHttps(req)?'Secure; ':'')+'SameSite=Strict; Max-Age=43200';}
+function createCsrfToken(){const random=crypto.randomBytes(32).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+random).digest('base64url');return random+'.'+sig;}
+function setCsrfCookie(res,token){res.setHeader('Set-Cookie',(res.getHeader('Set-Cookie')||[]).concat(['cem_csrf='+encodeURIComponent(token)+'; '+csrfCookieBase(res.req)]));}
+function validCsrfToken(token){const parts=String(token||'').split('.');if(parts.length!==2||!/^[A-Za-z0-9_-]{32,100}$/.test(parts[0]))return false;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+parts[0]).digest('base64url');return parts[1].length===expected.length&&crypto.timingSafeEqual(Buffer.from(parts[1]),Buffer.from(expected));}
+function validateCsrf(req){const origin=String(req.headers.origin||'').trim();const referer=String(req.headers.referer||'').trim();const proto=String(req.headers['x-forwarded-proto']|| (isHttps(req)?'https':'http')).split(',')[0].trim();const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim();const target=proto+'://'+host;const source=origin|| (referer?(()=>{try{return new URL(referer).origin}catch(_){return ''}})():'');if(source && source!==target)throw Object.assign(new Error('Cross-site request blocked.'),{status:403});if(String(req.headers['sec-fetch-site']||'').toLowerCase()==='cross-site')throw Object.assign(new Error('Cross-site request blocked.'),{status:403});const cookies=parseCookies(req),cookie=decodeURIComponent(String(cookies.cem_csrf||'')),header=String(req.headers['x-csrf-token']||'');if(!cookie||!header||cookie!==header||!validCsrfToken(header))throw Object.assign(new Error('CSRF validation failed. Refresh the page and try again.'),{status:403});}
+function securityHeaders(req){const h={'X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=(), payment=(self "https://checkout.razorpay.com")','Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Resource-Policy':'same-origin','X-DNS-Prefetch-Control':'off','X-Permitted-Cross-Domain-Policies':'none','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://api.razorpay.com; frame-src https://checkout.razorpay.com https://api.razorpay.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"};if(isHttps(req))h['Strict-Transport-Security']='max-age=31536000; includeSubDomains';return h;}
+function send(res,status,data){const h=securityHeaders(res.req);Object.assign(h,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization, X-CEM-Portal, X-CSRF-Token','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.writeHead(status,h);res.end(JSON.stringify(data));}
 
 function errorStatus(e){ return Number(e.status)||500; }
 
@@ -519,6 +527,8 @@ async function route(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const method = req.method;
   if (method==='OPTIONS') return send(res,204,{});
+  if (url.pathname==='/api/auth/csrf' && method==='GET') { const token=createCsrfToken(); setCsrfCookie(res,token); return send(res,200,{csrfToken:token}); }
+  if (url.pathname.startsWith('/api/') && method!=='GET' && url.pathname!=='/api/webhook') { rateLimit(req,'api-global',180,60000); validateCsrf(req); }
 
   if (url.pathname==='/api/config' && method==='GET') {
     return send(res,200,{paymentEnabled:CFG.payment.enabled,paymentMode:CFG.payment.enabled?'test':null,authMode:'manual'});
@@ -528,8 +538,7 @@ async function route(req, res) {
   }
 
   if (url.pathname==='/api/admin/request-otp' && method==='POST') {
-    rateLimit(req,'admin-otp',5,900000);
-    const b=await body(req), email=cleanEmail(b.email);
+    const b=await body(req), email=cleanEmail(b.email); rateLimit(req,'admin-otp',5,900000,email);
     if(email!==CFG.admin.email) throw Object.assign(new Error('This email is not authorized for Admin access.'),{status:403});
     if(Date.now()-adminOtpState.sentAt < 60*1000) throw Object.assign(new Error('Please wait 60 seconds before requesting another OTP.'),{status:429});
     const otp=String(crypto.randomInt(100000,1000000));
@@ -553,8 +562,7 @@ async function route(req, res) {
   }
 
   if (url.pathname==='/api/admin/verify-otp' && method==='POST') {
-    rateLimit(req,'admin-otp-verify',15,900000);
-    const b=await body(req), email=cleanEmail(b.email), otp=String(b.otp||'').trim();
+    const b=await body(req), email=cleanEmail(b.email), otp=String(b.otp||'').trim(); rateLimit(req,'admin-otp-verify',10,900000,email);
     if(email!==CFG.admin.email) throw Object.assign(new Error('This email is not authorized for Admin access.'),{status:403});
     if(!/^\d{6}$/.test(otp) || !adminOtpState.hash || Date.now()>adminOtpState.expiresAt) throw Object.assign(new Error('OTP is invalid or expired. Request a new OTP.'),{status:401});
     adminOtpState.attempts++;
@@ -578,8 +586,7 @@ async function route(req, res) {
   }
 
   if(url.pathname==='/api/auth/register/student'&&method==='POST'){
-    rateLimit(req,'register',8,3600000);
-    const b=await body(req),uidVal=uid('std-'),emailVal=cleanEmail(b.email),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),password=String(b.password||'');
+    const b=await body(req),uidVal=uid('std-'),emailVal=cleanEmail(b.email); rateLimit(req,'register-email',6,3600000,emailVal),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),password=String(b.password||'');
     if(!name||!EMAIL_RE.test(emailVal)||!mobile||!MOBILE_RE.test(mobile))throw new Error('Please provide a valid name, email and mobile number.');
     if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password))throw new Error('Password must contain at least 8 characters with uppercase, lowercase and a number.');
     const users=Object.values(await allMap('users'));if(users.some(u=>cleanEmail(u.email)===emailVal))throw new Error('This email is already registered.');
@@ -587,8 +594,7 @@ async function route(req, res) {
     await set('users/'+uidVal,profile);return send(res,200,{message:'Student account created. Please sign in to continue.',user:publicUser(profile)});
   }
   if(url.pathname==='/api/auth/register/teacher'&&method==='POST'){
-    rateLimit(req,'register',8,3600000);
-    const b=await body(req),uidVal=uid('tch-'),emailVal=cleanEmail(b.email),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),subject=String(b.subject||'').trim(),password=String(b.password||'');
+    const b=await body(req),uidVal=uid('tch-'),emailVal=cleanEmail(b.email); rateLimit(req,'register-email',6,3600000,emailVal),name=String(b.name||'').trim(),mobile=String(b.mobile||'').trim(),subject=String(b.subject||'').trim(),password=String(b.password||'');
     if(!name||!EMAIL_RE.test(emailVal)||!mobile||!subject||!MOBILE_RE.test(mobile))throw new Error('Please fill all fields with a valid mobile number.');
     if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password))throw new Error('Password must contain at least 8 characters with uppercase, lowercase and a number.');
     const users=Object.values(await allMap('users'));if(users.some(u=>cleanEmail(u.email)===emailVal))throw new Error('This email is already registered.');
@@ -596,8 +602,7 @@ async function route(req, res) {
     await set('users/'+uidVal,profile);return send(res,200,{message:'Registration submitted. Wait for Admin approval before logging in.',user:publicUser(profile)});
   }
   if(url.pathname==='/api/auth/login'&&method==='POST'){
-    rateLimit(req,'login',12,900000);
-    const b=await body(req),email=cleanEmail(b.email),password=String(b.password||'');if(!EMAIL_RE.test(email)||!password)throw Object.assign(new Error('Invalid email or password.'),{status:401});
+    const b=await body(req),email=cleanEmail(b.email),password=String(b.password||''); rateLimit(req,'login-email',8,900000,email);if(!EMAIL_RE.test(email)||!password)throw Object.assign(new Error('Invalid email or password.'),{status:401});
     const users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
     if(!user||!passwordMatches(password,user))throw Object.assign(new Error('Invalid email or password.'),{status:401});
     if(user.password&&!user.passwordHash){const upgraded={...user,passwordHash:hashPassword(password),updatedAt:nowIso()};delete upgraded.password;await set('users/'+user.uid,upgraded);Object.assign(user,upgraded);}
@@ -645,13 +650,13 @@ async function route(req, res) {
   }
 
   if(url.pathname==='/api/auth/forgot/request'&&method==='POST'){
-    rateLimit(req,'forgot',5,1800000);const b=await body(req),email=cleanEmail(b.email);if(!EMAIL_RE.test(email))throw new Error('Enter a valid email address.');
+    const b=await body(req),email=cleanEmail(b.email); rateLimit(req,'forgot-email',4,1800000,email);if(!EMAIL_RE.test(email))throw new Error('Enter a valid email address.');
     const users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
     if(user){const otp=String(crypto.randomInt(100000,1000000));await set('passwordResets/'+user.uid,{hash:crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(otp).digest('hex'),expiresAt:Date.now()+600000,attempts:0});const sent=await sendEmail(email,'Competitive Exam Master password reset',emailShell('Password reset','<p>Your password reset code is:</p><div style="font-size:32px;font-weight:800;letter-spacing:8px;padding:14px 0">'+otp+'</div><p>This code expires in 10 minutes.</p>'));if(!sent)throw Object.assign(new Error('Email delivery is unavailable right now.'),{status:503});}
     return send(res,200,{message:'If an account exists for that email, a reset code has been sent.'});
   }
   if(url.pathname==='/api/auth/forgot/confirm'&&method==='POST'){
-    rateLimit(req,'forgot-confirm',10,1800000);const b=await body(req),email=cleanEmail(b.email),otp=String(b.otp||''),newPassword=String(b.newPassword||''),users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
+    const b=await body(req),email=cleanEmail(b.email); rateLimit(req,'forgot-confirm-email',8,1800000,email),otp=String(b.otp||''),newPassword=String(b.newPassword||''),users=Object.values(await allMap('users')),user=users.find(u=>cleanEmail(u.email)===email);
     if(!user)throw Object.assign(new Error('Invalid or expired reset request.'),{status:400});
     if(newPassword.length<8||!/[A-Z]/.test(newPassword)||!/[a-z]/.test(newPassword)||!/[0-9]/.test(newPassword))throw new Error('New password must contain at least 8 characters with uppercase, lowercase and a number.');
     const reset=await get('passwordResets/'+user.uid),hash=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(otp).digest('hex'),stored=String(reset?.hash||'');
@@ -801,7 +806,17 @@ async function route(req, res) {
     if(!t||!t.published) throw new Error('Test not found.');
     if(await paidAccessBlocked(t,user)) throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
     if(await attemptBlocked(t,user)) throw new Error('You have already attempted this test. Only one attempt is allowed for this test series.');
-    return send(res,200,{...summarizeTest(t),attemptId:crypto.randomBytes(18).toString('base64url'),questions:t.questions.map((q,i)=>({index:i,question:q.question,options:q.options,subject:q.subject||'General',marks:q.marks,negative:q.negative,translations:q.translations||{}}))});
+    return send(res,200,summarizeTest(t));
+  }
+  if(mTest && method==='POST' && mTest[2]==='start') {
+    const {user}=await currentUser(req), tests=await allMap('tests'), t=tests[decodeURIComponent(mTest[1])];
+    if(!t||!t.published) throw new Error('Test not found.');
+    if(await paidAccessBlocked(t,user)) throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
+    if(await attemptBlocked(t,user)) throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});
+    const attemptId=crypto.randomBytes(24).toString('base64url'), startedAt=Date.now(), durationMs=Math.max(60000,Math.min(Number(t.duration)||30,1440)*60000);
+    const attempt={id:attemptId,testId:t.id,userId:user.uid,startedAt:new Date(startedAt).toISOString(),expiresAt:new Date(startedAt+durationMs).toISOString(),status:'active',questionCount:t.questions.length};
+    await set('examAttempts/'+attemptId,attempt);
+    return send(res,200,{...summarizeTest(t),attemptId,serverStartedAt:attempt.startedAt,serverExpiresAt:attempt.expiresAt,questions:t.questions.map((q,i)=>({index:i,question:q.question,options:q.options,subject:q.subject||'General',marks:q.marks,negative:q.negative,translations:q.translations||{}}))});
   }
   if(mTest && method==='GET' && mTest[2]==='solution'){
     const {user}=await currentUser(req), tests=await allMap('tests'), t=tests[decodeURIComponent(mTest[1])];
@@ -814,14 +829,18 @@ async function route(req, res) {
   if(mTest&&method==='POST'&&mTest[2]==='submit'){
     const {user}=await currentUser(req),tests=await allMap('tests'),t=tests[decodeURIComponent(mTest[1])];if(!t)throw new Error('Test not found.');
     if(await paidAccessBlocked(t,user))throw new Error('This is a Premium test series. Subscribe to Premium to access all paid test series.');
-    const b=await body(req),attemptId=String(b.attemptId||'').trim();if(!/^[A-Za-z0-9_-]{12,120}$/.test(attemptId))throw Object.assign(new Error('This exam session is invalid or expired. Please reopen the test.'),{status:400});
+    const b=await body(req),attemptId=String(b.attemptId||'').trim();if(!/^[A-Za-z0-9_-]{24,100}$/.test(attemptId))throw Object.assign(new Error('This exam session is invalid or expired. Please reopen the test.'),{status:400});
+    const examAttempt=await get('examAttempts/'+attemptId);if(!examAttempt||examAttempt.testId!==t.id||examAttempt.userId!==user.uid||examAttempt.status!=='active')throw Object.assign(new Error('This exam session is invalid or already submitted. Please reopen the test.'),{status:409});
+    const now=Date.now(),expiresAt=new Date(examAttempt.expiresAt).getTime();if(!Number.isFinite(expiresAt)||now>expiresAt+15000)throw Object.assign(new Error('Exam time has expired. Your attempt can no longer be submitted.'),{status:409});
+    const rawAnswers=b.answers&&typeof b.answers==='object'&&!Array.isArray(b.answers)?b.answers:{};const answers={};for(let i=0;i<t.questions.length;i++){const v=String(rawAnswers[i]??'').trim().toUpperCase();if(v&&/^[ABCD]$/.test(v))answers[i]=v;}
+    const rawTimes=b.timeBySubject&&typeof b.timeBySubject==='object'&&!Array.isArray(b.timeBySubject)?b.timeBySubject:{};const timeBySubject={};for(const subj of (t.subjects||['General'])){const key=encodeFirebaseKey(subj),v=Number(rawTimes[subj]??rawTimes[key]);if(Number.isFinite(v)&&v>=0)timeBySubject[key]=Math.min(v,(Number(t.duration)||30)*60);}
     const submissionId='att-'+crypto.createHash('sha256').update(user.uid+'|'+t.id+'|'+attemptId).digest('hex').slice(0,40);
     if(t.attemptPolicy==='once'&&user.role==='student'){
       const lockPath='attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid);
       if(db&&!useMemDb){const tx=await db.ref(lockPath).transaction(cur=>cur===null?{attemptId,submissionId,createdAt:nowIso()}:undefined,undefined,false);if(!tx.committed){const lock=tx.snapshot.val();if(lock?.submissionId===submissionId){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));}throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}}
       else {const lock=await get(lockPath);if(lock){const saved=await get('submissions/'+submissionId);if(saved)return send(res,200,await calculateResult(t,saved.answers||{},saved.timeBySubject||{},false,user,false));throw Object.assign(new Error('You have already attempted this test. Only one attempt is allowed for this test series.'),{status:409});}await set(lockPath,{attemptId,submissionId,createdAt:nowIso()});}
     }
-    try{return send(res,200,await calculateResult(t,b.answers||{},b.timeBySubject||{},true,user,false,submissionId));}catch(err){if(t.attemptPolicy==='once'&&user.role==='student')try{await remove('attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid));}catch(_){}throw err;}
+    try{const result=await calculateResult(t,answers,timeBySubject,true,user,false,submissionId);examAttempt.status='submitted';examAttempt.submittedAt=nowIso();examAttempt.serverElapsedSeconds=Math.max(0,Math.min((now-examAttempt.startedAt?new Date(examAttempt.startedAt).getTime():now)/1000,(Number(t.duration)||30)*60));await update('examAttempts/'+attemptId,examAttempt);return send(res,200,result);}catch(err){if(t.attemptPolicy==='once'&&user.role==='student')try{await remove('attemptLocks/'+encodeURIComponent(t.id)+'/'+encodeURIComponent(user.uid));}catch(_){}throw err;}
   }
 
   if(url.pathname==='/api/tests'&&method==='POST'){
@@ -992,6 +1011,7 @@ async function route(req, res) {
 
   if (url.pathname === '/api/verify' && method === 'POST') {
     const {uid:userId}=await requireRole(req,'student');
+    rateLimit(req,'payment-verify',10,600000,userId);
     if (!CFG.payment.enabled) throw Object.assign(new Error('Razorpay Test Mode is not configured on the server.'),{status:503});
     const b = await body(req), oid = String(b.razorpay_order_id||''), pid = String(b.razorpay_payment_id||''), sig = String(b.razorpay_signature||'');
     const order = await get('orders/' + oid);
@@ -1103,7 +1123,7 @@ async function calculateResult(t, answers, timeBySubject, saveAttempt, user, sol
   const sections=Object.values(sectionMap).map(s=>({...s,score:Math.round(s.score*100)/100,maxScore:Math.round(s.maxScore*100)/100,accuracy:s.attempted?Math.round(s.correct/s.attempted*1000)/10:0,timeSeconds:Math.round(timeForSubject(s.section))}));
   if(saveAttempt){
     const id=submissionId||uid('att-'),submittedAt=nowIso();
-    const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject:encodeTimeBySubject(timeBySubject),submittedAt};
+    const saved={id,testId:t.id,userId:user.uid,score,answers,timeBySubject:encodeTimeBySubject(timeBySubject),submittedAt,integrity:{serverCalculated:true,submissionId:id}};
     await multiUpdate({['submissions/'+id]:saved,['scoreIndex/'+t.id+'/'+id]:{score,userId:user.uid,submittedAt}});
   }
   const allScores=Object.values(await allMap('scoreIndex/'+t.id)).map(s=>Number(s.score)||0);
@@ -1139,12 +1159,13 @@ function serveStatic(req,res) {
   const realRoot=path.join(__dirname,'frontend');
   const real=path.resolve(p);
   if(real!==path.resolve(realRoot, path.basename(real)) && !real.startsWith(realRoot+path.sep)) return false;
-  res.writeHead(200,{'Content-Type':mimeFile(p),'Cache-Control':'no-store'});
+  res.writeHead(200,{...securityHeaders(req),'Content-Type':mimeFile(p),'Cache-Control':'no-store'});
   fs.createReadStream(p).pipe(res);
   return true;
 }
 
 const server=http.createServer(async(req,res)=>{
+  server.headersTimeout=65000; server.requestTimeout=120000; server.keepAliveTimeout=5000;
   try {
     if(req.url.startsWith('/api/')) return await route(req,res);
     if(serveStatic(req,res)) return;
