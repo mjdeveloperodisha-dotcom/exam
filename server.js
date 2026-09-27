@@ -1045,7 +1045,7 @@ async function route(req, res) {
     if(!testId||!Number.isInteger(rating)||rating<1||rating>5)throw new Error('Choose a rating from 1 to 5 stars.');
     const t=(await allMap('tests'))[testId];if(!t)throw new Error('Test not found.');
     const submissions=Object.values(await allMap('submissions')).filter(x=>x.testId===testId&&x.userId===user.uid);if(!submissions.length)throw Object.assign(new Error('Complete the test before rating it.'),{status:403});
-    const ratings=await allMap('ratings'),existing=Object.values(ratings).find(x=>x.testId===testId&&x.userId===user.uid),row=existing||{id:uid('rate-'),testId,userId:user.uid,userName:user.name,createdAt:nowIso()};
+    const ratings=await allMap('ratings'),existing=Object.values(ratings).find(x=>x.testId===testId&&x.userId===user.uid),row=existing||{id:uid('rate-'),testId,testTitle:t.title,userId:user.uid,userName:user.name,createdAt:nowIso()};
     row.rating=rating;row.feedback=feedback;row.updatedAt=nowIso();await set('ratings/'+row.id,row);return send(res,200,{message:existing?'Rating updated.':'Thanks for rating this test.',rating:publicRating(row)});
   }
   if(url.pathname==='/api/tests/ratings/mine'&&method==='GET'){
@@ -1074,7 +1074,7 @@ async function route(req, res) {
   throw Object.assign(new Error('Not found.'),{status:404});
 }
 
-function publicRating(r){return r?{id:r.id,testId:r.testId,rating:r.rating,feedback:r.feedback||'',createdAt:r.createdAt,updatedAt:r.updatedAt}:null;}
+function publicRating(r){return r?{id:r.id,testId:r.testId,testTitle:r.testTitle||'',userId:r.userId,userName:r.userName||'',rating:r.rating,feedback:r.feedback||'',createdAt:r.createdAt,updatedAt:r.updatedAt}:null;}
 
 async function calculateResult(t, answers, timeBySubject, saveAttempt, user, solutionMode, submissionId) {
   let score=0,correct=0,incorrect=0,unattempted=0; const sectionMap={};
