@@ -1178,7 +1178,7 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update
+  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET
 });
 async function route(req,res){return routeV2(req,res);}
 
