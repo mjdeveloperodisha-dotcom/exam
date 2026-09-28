@@ -252,33 +252,7 @@ async function migrateLegacyTestOwnership(userId,oldEmail,newEmail) {
 }
 
 async function ensureSeeds() {
-  if (!(await get('settings'))) await set('settings', DEFAULT_SETTINGS);
-  if (!(await get('payment'))) await set('payment', DEFAULT_PAYMENT);
-  const modules = await get('modules');
-  if (!modules) {
-    const obj = {};
-    DEFAULT_MODULES.forEach((m, i) => { obj['m-default-'+(i+1)] = { ...m, id:'m-default-'+(i+1), createdBy:'system', createdAt:nowIso() }; });
-    await set('modules', obj);
-  }
-  if (!(await get('plans'))) {
-    const obj = {}; DEFAULT_PLANS.forEach(p => { obj[p.id] = p; });
-    await set('plans', obj);
-  }
-  if (!(await get('tests'))) await set('tests', {});
-  if (!(await get('submissions'))) await set('submissions', {});
-  if (!(await get('subscriptions'))) await set('subscriptions', {});
-  if (!(await get('purchases'))) await set('purchases', {});
-  if (!(await get('orders'))) await set('orders', {});
-  if (!(await get('ratings'))) await set('ratings', {});
-  if (!(await get('attemptLocks'))) await set('attemptLocks', {});
-  if (!(await get('examAttempts'))) await set('examAttempts', {});
-  if (!(await get('webhookEvents'))) await set('webhookEvents', {});
-  if (!(await get('passwordResets'))) await set('passwordResets', {});
-  if (!(await get('scoreIndex'))) {
-    const subs=await allMap('submissions'),idx={};
-    for(const x of Object.values(subs)){if(!x?.testId||!x?.id)continue;(idx[x.testId] ||= {})[x.id]={score:Number(x.score)||0,userId:x.userId||'',submittedAt:x.submittedAt||nowIso()};}
-    await set('scoreIndex',idx);
-  }
+  if (!(await get('cem2'))) await set('cem2', {});
 }
 
 const AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('hex'));
