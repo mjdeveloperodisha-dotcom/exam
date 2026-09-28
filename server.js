@@ -218,6 +218,23 @@ function passwordMatches(value,user) {
 function ownsTest(user,test) {
   return !!test && (test.createdById ? test.createdById===user.uid : cleanEmail(test.createdBy)===cleanEmail(user.email));
 }
+const AUTH_SESSION_SECRET=process.env.AUTH_SESSION_SECRET||(process.env.NODE_ENV==='production'?'':crypto.randomBytes(32).toString('hex'));
+const ADMIN_OTP_SECRET=process.env.ADMIN_OTP_SECRET||AUTH_SESSION_SECRET;
+if(process.env.NODE_ENV==='production'&&AUTH_SESSION_SECRET.length<32)throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
+const ADMIN_OTP_TTL_MS=10*60*1000;
+const adminOtpState={hash:'',expiresAt:0,attempts:0,sentAt:0};
+const rateBuckets=new Map();
+function clientIp(req){return String(req.headers['cf-connecting-ip']||req.headers['x-forwarded-for']||req.socket.remoteAddress||'').split(',')[0].trim().slice(0,80);}
+function rateKeyPart(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,32);}
+function rateLimit(req,key,limit,windowMs,identity=''){const k=key+':'+clientIp(req)+':'+rateKeyPart(identity),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
+setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
+function hashAdminOtp(otp){return crypto.createHmac('sha256',ADMIN_OTP_SECRET).update(String(otp)).digest('hex');}
+function createAdminSession(uidValue){const payload=Buffer.from(JSON.stringify({uid:uidValue,email:CFG.admin.email,exp:Date.now()+12*60*60*1000})).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(payload).digest('base64url');return 'ADM1.'+payload+'.'+sig;}
+function verifyAdminSession(token){if(!String(token||'').startsWith('ADM1.'))return null;const p=String(token).split('.');if(p.length!==3)return null;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(p[1]).digest('base64url');if(p[2].length!==expected.length||!crypto.timingSafeEqual(Buffer.from(p[2]),Buffer.from(expected)))return null;try{const x=JSON.parse(Buffer.from(p[1],'base64url').toString('utf8'));return x.email===CFG.admin.email&&Number(x.exp)>=Date.now()?x:null;}catch(_){return null;}}
+function createUserSession(uidValue,emailValue,roleValue,nameValue,instituteId=''){const payload=Buffer.from(JSON.stringify({uid:uidValue,email:emailValue,role:roleValue,name:nameValue||'User',instituteId:String(instituteId||''),exp:Date.now()+12*60*60*1000})).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(payload).digest('base64url');return 'USR1.'+payload+'.'+sig;}
+function verifyUserSession(token){if(!String(token||'').startsWith('USR1.'))return null;const p=String(token).split('.');if(p.length!==3)return null;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(p[1]).digest('base64url');if(p[2].length!==expected.length||!crypto.timingSafeEqual(Buffer.from(p[2]),Buffer.from(expected)))return null;try{const x=JSON.parse(Buffer.from(p[1],'base64url').toString('utf8'));return Number(x.exp)>=Date.now()?x:null;}catch(_){return null;}}
+function publicUser(u){if(!u)return null;const x={...u};delete x.password;delete x.passwordHash;delete x.resetToken;delete x.resetTokenExpiry;return x;}
+function parseCookies(req){const o={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)o[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());}return o;}
 async function sendEmail(to, subject, html, text='') {
   if (!CFG.gmail.clientId || !CFG.gmail.clientSecret || !CFG.gmail.refreshToken || !CFG.gmail.sender || !to) {
     console.warn('[Email] Gmail API not fully configured — email skipped for:', to, subject);
