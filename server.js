@@ -295,6 +295,33 @@ async function issueAdminOtp({email,hash,expiresAt,requestTimestamp}){
   if(saved.requestTimestamp!==now||saved.hash!==hash)throw Object.assign(new Error('Please wait 60 seconds before requesting another OTP.'),{status:429});
   return true;
 }
+async function createPasswordResetChallenge(uidValue,hash,expiresAt,requestTimestamp){
+  const p=SECURITY_ROOT+'/passwordResets/'+securityPathKey(uidValue);
+  await set(p,{uid:String(uidValue),hash:String(hash),expiry:Number(expiresAt),attempts:0,consumed:false,requestTimestamp:Number(requestTimestamp)||Date.now(),createdAt:nowIso(),consumedAt:null});
+  return p;
+}
+async function invalidatePasswordResetChallenge(uidValue){
+  const p=SECURITY_ROOT+'/passwordResets/'+securityPathKey(uidValue);
+  await set(p,{uid:String(uidValue),hash:'',expiry:0,attempts:0,consumed:true,requestTimestamp:Date.now(),createdAt:nowIso(),consumedAt:nowIso(),invalidated:true});
+}
+async function consumePasswordResetChallenge(uidValue,otp){
+  const p=SECURITY_ROOT+'/passwordResets/'+securityPathKey(uidValue),now=Date.now(),attemptHash=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(String(otp)).digest('hex'),verificationId=crypto.randomBytes(16).toString('hex');
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure password reset storage is unavailable.'),{status:503});
+    return {ok:false,reason:'unavailable'};
+  }
+  const tx=await db.ref(p).transaction(cur=>{
+    const current=cur&&typeof cur==='object'?{...cur}:null;
+    if(!current||current.consumed||!current.hash||Number(current.expiry)<=now||Number(current.attempts||0)>=5)return current;
+    const attempts=Number(current.attempts||0)+1;
+    if(attemptHash===String(current.hash))return {...current,attempts,consumed:true,verificationId,consumedAt:new Date(now).toISOString()};
+    return {...current,attempts,consumed:attempts>=5,verificationId:null,consumedAt:attempts>=5?new Date(now).toISOString():current.consumedAt||null};
+  },undefined,false);
+  const saved=tx.snapshot.val()||{};
+  if(saved.verificationId===verificationId&&saved.consumed===true)return {ok:true};
+  if(!saved.hash||saved.consumed||Number(saved.expiry)<=now||Number(saved.attempts||0)>=5)return {ok:false,reason:'locked'};
+  return {ok:false,reason:'incorrect',attempts:Number(saved.attempts||0)};
+}
 async function invalidateAdminOtp(){
   if(!db||useMemDb){
     if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure OTP storage is unavailable.'),{status:503});
@@ -424,7 +451,7 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp
+  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp,createPasswordResetChallenge,invalidatePasswordResetChallenge,consumePasswordResetChallenge
 });
 async function route(req,res){return routeV2(req,res);}
 
