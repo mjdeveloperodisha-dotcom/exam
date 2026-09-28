@@ -44,6 +44,11 @@ The new project uses **cem2/...** and does not delete or overwrite the previous 
 - cem2/ratings
 - cem2/passwordResets
 - cem2/settings
+- cem2/security/sessions
+- cem2/security/rateLimits
+- cem2/security/adminOtp
+- cem2/security/passwordResets
+- cem2/security/audit
 
 ## Server-side security architecture
 
