@@ -45,9 +45,24 @@ The new project uses **cem2/...** and does not delete or overwrite the previous 
 - cem2/passwordResets
 - cem2/settings
 
+## Server-side security architecture
+
+Authentication state is server-controlled. Production does not trust client-side authentication state.
+
+- Authenticated sessions use random opaque 256-bit cookies; only a SHA-256 hash of each session token is stored in Firebase under `cem2/security/sessions`
+- Sessions have a server-enforced absolute expiry and can be revoked immediately on logout
+- Password changes and institute credential changes increment a server-side authentication version, invalidating older sessions
+- Production rate limiting is stored in Firebase transactions under `cem2/security/rateLimits`, so limits are shared across multiple Node.js instances
+- Main Admin OTP state is stored only server-side under `cem2/security/adminOtp`
+- Main Admin OTP stores only the HMAC hash, expiry, attempt count, consumed state and server request timestamp; the plaintext OTP is never persisted
+- Main Admin OTP verification is atomic and single-use, including concurrent-request protection
+- Password-reset OTP state is also server-side, hashed, short-lived, attempt-limited and atomic single-use
+- Production refuses to start without Firebase-backed storage and a strong `AUTH_SESSION_SECRET`
+- Firebase Realtime Database rules remain deny-by-default; browser clients do not receive Firebase Admin credentials
+
 ## Examination security
 
-- Server-side authentication and signed HMAC sessions
+- Server-side authentication and database-backed opaque sessions
 - CSRF token + same-origin validation
 - Rate limiting
 - Secure/HttpOnly/SameSite cookies
