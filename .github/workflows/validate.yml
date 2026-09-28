@@ -19,13 +19,14 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          for src in ["frontend/CompetitiveExamMaster-student.html","frontend/CompetitiveExamMaster-admin.html"]:
+          for src in ["frontend/CompetitiveExamMaster-student.html","frontend/CompetitiveExamMaster-admin.html","frontend/CompetitiveExamMaster-institute.html"]:
               text=Path(src).read_text(encoding="utf-8")
               scripts=re.findall(r"<script(?:\s[^>]*)?>([\s\S]*?)</script>",text,re.I)
               Path("/tmp/"+Path(src).stem+".js").write_text("\n".join(scripts),encoding="utf-8")
           PY
           node --check /tmp/CompetitiveExamMaster-student.js
           node --check /tmp/CompetitiveExamMaster-admin.js
+      node --check /tmp/CompetitiveExamMaster-institute.js
       - name: Security hardening checks
         shell: bash
         run: |
@@ -34,6 +35,7 @@ jobs:
           server=Path("server.js").read_text(encoding="utf-8")
           student=Path("frontend/CompetitiveExamMaster-student.html").read_text(encoding="utf-8")
           admin=Path("frontend/CompetitiveExamMaster-admin.html").read_text(encoding="utf-8")
+          institute=Path("frontend/CompetitiveExamMaster-institute.html").read_text(encoding="utf-8")
           for marker in [
               "const locks=(await allMap('attemptLocks/'",
               "const scores=(await allMap('scoreIndex/'",
@@ -50,6 +52,8 @@ jobs:
               assert marker in student, f"missing student security marker: {marker}"
           for marker in ["getCsrfToken()","X-CSRF-Token"]:
               assert marker in admin, f"missing admin security marker: {marker}"
+          for marker in ["X-CEM-Portal","X-CSRF-Token","/api/institute/users","/api/modules"]:
+              assert marker in institute, f"missing institute security marker: {marker}"
           assert "attemptId:crypto.randomBytes(18)" not in server
           print("Security hardening static checks passed.")
           PY
