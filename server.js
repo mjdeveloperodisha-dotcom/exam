@@ -230,7 +230,6 @@ const SECURITY_OTP_PATH=SECURITY_ROOT+'/adminOtp';
 const SECURITY_SESSION_PATH=SECURITY_ROOT+'/sessions';
 const SECURITY_RATE_PATH=SECURITY_ROOT+'/rateLimits';
 const rateBuckets=new Map();
-const adminOtpState=null;
 function clientIp(req){const forwarded=CFG.trustProxy?String(req.headers['cf-connecting-ip']||req.headers['x-forwarded-for']||'').split(',')[0].trim():'';return String(forwarded||req.socket.remoteAddress||'').slice(0,80);}
 function rateKeyPart(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,40);}
 function securityPathKey(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex');}
