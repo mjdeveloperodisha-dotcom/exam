@@ -295,6 +295,13 @@ async function issueAdminOtp({email,hash,expiresAt,requestTimestamp}){
   if(saved.requestTimestamp!==now||saved.hash!==hash)throw Object.assign(new Error('Please wait 60 seconds before requesting another OTP.'),{status:429});
   return true;
 }
+async function invalidateAdminOtp(){
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure OTP storage is unavailable.'),{status:503});
+    return;
+  }
+  await set(SECURITY_OTP_PATH,{hash:'',expiry:0,attempts:0,consumed:true,requestTimestamp:Date.now(),createdAt:nowIso(),consumedAt:nowIso(),invalidated:true});
+}
 async function consumeAdminOtp(otp){
   const now=Date.now(),attemptHash=hashAdminOtp(otp);
   if(!db||useMemDb){
@@ -417,7 +424,7 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp
+  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp
 });
 async function route(req,res){return routeV2(req,res);}
 
