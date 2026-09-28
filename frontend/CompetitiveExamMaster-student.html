@@ -677,7 +677,7 @@ table.sec-table td{border-bottom-color:var(--border)}
 <nav class="nav">
   <button onclick="showSection('home')">Home</button>
   <button onclick="showTests(null)">Test Series</button>
-  <button id="premiumNav" class="hidden" onclick="showSection('premium')">⭐ Premium</button>
+  
   <button id="authNav" onclick="showSection('auth')">Login / Register</button>
   <button id="accountNav" class="hidden" onclick="showSection('account')">My Account</button>
   <button id="teacherNav" class="hidden" onclick="showSection('teacher')">Teacher</button>
@@ -858,18 +858,18 @@ table.sec-table td{border-bottom-color:var(--border)}
         <p class="muted">Create your student account, then sign in with your email and password to continue.</p>
         <div class="form-row"><label>Full name</label><input id="studentName" placeholder="Full name"></div>
         <div class="form-row"><label>Mobile Number</label><input id="studentMobile" type="tel" placeholder="e.g. 9876543210"></div>
-        <div class="form-row"><label>Email</label><input id="studentEmail" type="email" placeholder="Email"></div>
-        <div class="form-row"><label>Password</label><input id="studentPassword" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6"></div>
+        <div class="form-row"><label>Institute</label><select id="studentInstitute"><option value="">Loading institutes…</option></select><p class="muted">Choose your institute.</p></div><div class="form-row"><label>Email</label><input id="studentEmail" type="email" placeholder="Email"></div>
+        <div class="form-row"><label>Password</label><input id="studentPassword" type="password" placeholder="At least 10 characters" autocomplete="new-password" minlength="10"></div>
         <div class="form-row"><label>Confirm Password</label><input id="studentConfirmPassword" type="password" placeholder="Re-enter password" autocomplete="new-password" minlength="6"></div>
         <button class="primary-btn" style="width:100%" onclick="registerStudent()">Register as Student</button>
         <p id="studentMsg"></p>
       </div>
 
       <div id="regPaneTeacher" class="hidden">
-        <p class="muted">Teachers can register themselves. <strong>Admin approval is required before teacher login is activated.</strong></p>
+        <p class="muted">Teachers can register themselves. <strong>Institute approval is required before teacher login is activated.</strong></p>
         <div class="form-row"><label>Full name</label><input id="teacherName" placeholder="Full name"></div>
         <div class="form-row"><label>Mobile Number</label><input id="teacherMobile" type="tel" placeholder="e.g. 9876543210"></div>
-        <div class="form-row"><label>Email</label><input id="teacherEmail" type="email" placeholder="Email"></div>
+        <div class="form-row"><label>Institute</label><select id="teacherInstitute"><option value="">Loading institutes…</option></select><p class="muted">Choose the institute where you teach.</p></div><div class="form-row"><label>Email</label><input id="teacherEmail" type="email" placeholder="Email"></div>
         <div class="form-row"><label>Subject / Expertise</label><input id="teacherSubject" placeholder="e.g. Mathematics"></div>
         <div class="form-row"><label>Password</label><input id="teacherPassword" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6"></div>
         <div class="form-row"><label>Confirm Password</label><input id="teacherConfirmPassword" type="password" placeholder="Re-enter password" autocomplete="new-password" minlength="6"></div>
@@ -891,13 +891,7 @@ table.sec-table td{border-bottom-color:var(--border)}
   </div>
 </section>
 
-<section id="premium" class="section hidden">
-  <h2>⭐ Premium — access all paid test series</h2>
-  <div class="panel-card" id="premiumStatus" style="margin-bottom:16px"></div>
-  <div class="grid" id="premiumPlans"></div>
-  <div class="panel-card hidden" id="premiumPay" style="margin-top:16px"></div>
-  <div class="panel-card" style="margin-top:18px"><h3>My payments</h3><div id="premiumHistory"></div></div>
-</section>
+
 
 <section id="account" class="section hidden">
   <h2>My Account</h2>
@@ -967,7 +961,7 @@ table.sec-table td{border-bottom-color:var(--border)}
     <div class="row">
       <div class="form-row" style="flex:1"><label>Type</label>
         <select id="ntType">
-          <option value="FREE">Free</option><option value="PAID">Premium (paid users only)</option>
+          <option value="FREE">Free</option>
         </select>
       </div>
       <div class="form-row" style="flex:1"><label>Duration (minutes)</label><input id="ntDuration" type="number" min="1" value="30"></div>
@@ -1027,6 +1021,19 @@ function esc(value){const s=String(value??'');return s.replace(/&/g,'&amp;').rep
 function msg(id,text,ok=false){const el=document.getElementById(id);if(!el)return;el.textContent=String(text||'');el.className=ok?'success':'error';}
 function authError(e){return String((e&&e.message)||'Unable to complete the request.');}
 async function registerAccount(kind,data){return api('POST','/api/auth/register/'+kind,data);}
+async function loadInstitutesForRegistration(){
+  try{
+    const {institutes}=await api('GET','/api/institutes');
+    ['studentInstitute','teacherInstitute'].forEach(id=>{
+      const el=document.getElementById(id); if(!el)return;
+      const current=el.value;
+      el.innerHTML='<option value="">Select your institute</option>'+(institutes||[]).map(i=>'<option value="'+esc(i.id)+'">'+esc(i.name)+'</option>').join('');
+      if((institutes||[]).some(i=>i.id===current))el.value=current;
+    });
+  }catch(_){
+    ['studentInstitute','teacherInstitute'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML='<option value="">Unable to load institutes</option>';});
+  }
+}
 async function loginAccount(email,password){return api('POST','/api/auth/login',{email,password});}
 let currentUser = null;
 let activeCategory = null;
@@ -1035,8 +1042,6 @@ let activeCategory = null;
 function showSection(id){
   document.querySelectorAll('main>section').forEach(s=>s.classList.add('hidden'));
   const el=document.getElementById(id); if(el) el.classList.remove('hidden');
-  if(id==='premium') loadPremium();
-  if(id==='admin') { renderAdmin(); loadSettingsIntoForm(); loadPurchaseRequests(); mountModuleManager('adminModules','adm'); }
   if(id==='tests') loadTests();
   if(id==='teacher') { loadMyTests(); loadTeacherModules(); }
   if(id==='account') loadAccount();
@@ -1066,7 +1071,7 @@ window.showAuthTab = function(tab){
   const loginPane=document.getElementById('authPaneLogin'),registerPane=document.getElementById('authPaneRegister');
   loginPane.classList.toggle('hidden', !isLogin);
   registerPane.classList.toggle('hidden', isLogin);
-  animateAuthPane(isLogin?loginPane:registerPane);
+  animateAuthPane(isLogin?loginPane:registerPane); if(!isLogin) loadInstitutesForRegistration();
   document.getElementById('authTabLogin').className = isLogin ? 'primary-btn' : 'secondary';
   document.getElementById('authTabRegister').className = !isLogin ? 'primary-btn' : 'secondary';
   document.getElementById('authTabLogin').setAttribute('aria-selected',String(isLogin));
@@ -1138,6 +1143,7 @@ async function refreshUser(){
     }
     currentUser = user;
     updateUI();
+    if(user?.instituteId) loadBranding();
     return user;
   }catch(_){
     currentUser = null;
@@ -1152,11 +1158,11 @@ window.registerStudent = async function(){
   const confirmPassword=document.getElementById('studentConfirmPassword').value;
   const email=document.getElementById('studentEmail').value.trim();
   if(password!==confirmPassword){ msg('studentMsg','Passwords do not match.'); return; }
-  if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('studentMsg','Password must contain at least 8 characters with uppercase, lowercase and a number.'); return; }
+  if(password.length<10||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('studentMsg','Password must contain at least 10 characters with uppercase, lowercase and a number.'); return; }
   if(!email){ msg('studentMsg','Please enter your email address.'); return; }
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
-    const body={name:document.getElementById('studentName').value.trim(),mobile:document.getElementById('studentMobile').value.trim(),email,password};
+    const instituteId=document.getElementById('studentInstitute').value;if(!instituteId){msg('studentMsg','Please choose your institute.');return;}const body={name:document.getElementById('studentName').value.trim(),mobile:document.getElementById('studentMobile').value.trim(),email,password,instituteId};
     const r=await registerAccount('student',body);
     msg('studentMsg',r.message,true);
     ['studentName','studentMobile','studentEmail','studentPassword','studentConfirmPassword'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
@@ -1175,11 +1181,11 @@ window.registerTeacher = async function(){
   const confirmPassword=document.getElementById('teacherConfirmPassword').value;
   const email=document.getElementById('teacherEmail').value.trim();
   if(password!==confirmPassword){ msg('teacherMsg','Passwords do not match.'); return; }
-  if(password.length<8||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('teacherMsg','Password must contain at least 8 characters with uppercase, lowercase and a number.'); return; }
+  if(password.length<10||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){ msg('teacherMsg','Password must contain at least 10 characters with uppercase, lowercase and a number.'); return; }
   if(!email){ msg('teacherMsg','Please enter your email address.'); return; }
   btn?.classList.add('loading'); if(btn){btn.disabled=true;btn.textContent='Creating account…';}
   try{
-    const body={name:document.getElementById('teacherName').value.trim(),mobile:document.getElementById('teacherMobile').value.trim(),email,subject:document.getElementById('teacherSubject').value.trim(),password};
+    const instituteId=document.getElementById('teacherInstitute').value;if(!instituteId){msg('teacherMsg','Please choose your institute.');return;}const body={name:document.getElementById('teacherName').value.trim(),mobile:document.getElementById('teacherMobile').value.trim(),email,subject:document.getElementById('teacherSubject').value.trim(),password,instituteId};
     const r=await registerAccount('teacher',body);
     
     
@@ -1237,7 +1243,7 @@ window.loginUser = async function(){
 window.logout=async function(){try{await api('POST','/api/auth/logout');}catch(_){}currentUser=null;updateUI();showSection('home');};
 
 function updateUI(){
-  ['adminNav','teacherNav','logoutNav','accountNav','premiumNav'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
+  ['adminNav','teacherNav','logoutNav','accountNav'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
   document.getElementById('authNav')?.classList.remove('hidden');
   if(currentUser){
     document.getElementById('logoutNav')?.classList.remove('hidden');
@@ -1245,7 +1251,6 @@ function updateUI(){
     document.getElementById('authNav')?.classList.add('hidden');
     if(currentUser.role==='admin') document.getElementById('adminNav')?.classList.remove('hidden');
     if(currentUser.role==='teacher') document.getElementById('teacherNav')?.classList.remove('hidden');
-    if(currentUser.role==='student') document.getElementById('premiumNav')?.classList.remove('hidden');
     const w=document.getElementById('teacherWelcome');
     if(w && currentUser.role==='teacher') w.textContent='Welcome, '+currentUser.name+' — '+(currentUser.subject||'')+'.';
   }
@@ -1564,17 +1569,8 @@ window.deleteModule = async function(btn, p){
   }catch(e){ msg(p+'ModMsg', e.message); }
 };
 async function loadTeacherModules(){
-  const box = document.getElementById('teacherModules');
-  if(!box) return;
-  if(!currentUser || currentUser.role!=='teacher'){ box.innerHTML = ''; return; }
-  try{ await refreshUser(); }catch(e){}
-  if(!currentUser || currentUser.role!=='teacher'){ box.innerHTML = ''; return; }
-  if(currentUser.canManageModules){
-    mountModuleManager('teacherModules','tch');
-  } else {
-    box.innerHTML = '<h3>🗂️ Exam Modules</h3><p class="muted">Only the Admin can add or delete exam modules. Ask the Admin to give you module access if you need it.</p>';
-    refreshModuleViews();
-  }
+  const box=document.getElementById('teacherModules');if(!box||!currentUser||currentUser.role!=='teacher'){if(box)box.innerHTML='';return;}
+  try{const {modules}=await api('GET','/api/modules');box.innerHTML='<h3>🗂️ Institute Exam Modules</h3><p class="muted">Modules are managed by your Institute Admin. Select one when creating a Test Series.</p><div class="grid">'+(modules||[]).map(m=>'<div class="card"><b>'+esc(m.icon)+' '+esc(m.name)+'</b><p class="muted">'+esc(m.description||'')+'</p></div>').join('')+'</div>';}catch(e){box.innerHTML='<p class="muted">'+esc(e.message)+'</p>';}
 }
 
 
@@ -1598,39 +1594,16 @@ function trackTimeSpent(){
 }
 
 async function loadTests(){
-  const grid = document.getElementById('testsGrid');
-  document.getElementById('testsTitle').textContent = activeCategory ? 'Test Series — ' + activeCategory : 'Test Series — All Modules';
+  const grid=document.getElementById('testsGrid');document.getElementById('testsTitle').textContent=activeCategory?'Test Series — '+activeCategory:'Test Series — All Modules';
   try{
-    const url = '/api/tests' + (activeCategory ? '?category=' + encodeURIComponent(activeCategory) : '');
-    const { tests, attemptedIds } = await api('GET', url);
-
-    let premiumActive = false;
-    if(currentUser && currentUser.role === 'student'){
-      try{ premiumActive = (await api('GET','/api/subscription/mine')).active; }catch(e){  }
-    }
-
-    const attemptedSet = new Set(attemptedIds||[]);
-    document.getElementById('testsHint').textContent = tests.length + ' test series available';
-    grid.innerHTML = tests.map(t => {
-      const startBtn = t => (t.attemptPolicy==='once' && attemptedSet.has(t.id)) ? `<button onclick="viewSolution('${t.id}')">📖 View Solution</button>` : `<button onclick="startTest('${t.id}')">Start Test</button>` + solBtn(t);
-      const solBtn = t => attemptedSet.has(t.id) ? ` <button class="secondary" onclick="viewSolution('${t.id}')">📖 Solution</button>` : '';
-      let action;
-      if(t.type === 'paid' && currentUser && currentUser.role === 'student' && !premiumActive){
-        action = `<button class="secondary" onclick="showSection('premium')">🔒 Unlock with Premium</button>` + solBtn(t);
-      } else action = startBtn(t);
-      return `
-      <div class="card">
-        <h3>${t.type==='paid' ? '⭐' : '🆓'} ${esc(t.title)}</h3>
-        <p class="muted">${esc(t.category)} • ${esc(t.exam)} • ${t.questionCount} questions • ${t.duration} min${t.type==='paid' ? ' • ⭐ Premium' : ''}${t.languages && t.languages.length>1 ? ' • 🌐 '+t.languages.map(esc).join('/') : ''}</p>
-        ${t.subjects && t.subjects.length>1 ? `<p class="muted">Subjects: ${t.subjects.map(esc).join(', ')}</p>` : ''}
-        <p class="muted">${t.attemptPolicy==='once' ? '🔒 One attempt only' : '🔁 Reattempt allowed'}</p>
-        ${action}
-      </div>
-    `;}).join('') || `<p class="muted">No ${esc(activeCategory||'')} test series published yet.</p>`;
-  }catch(e){
-    if(!currentUser){ showSection('auth'); msg('loginMsg', 'Please log in or register first to view Test Series.', false); return; }
-    grid.innerHTML = `<p class="muted">${esc(e.message)}</p>`;
-  }
+    const url='/api/tests'+(activeCategory?'?category='+encodeURIComponent(activeCategory):''),r=await api('GET',url),attempted=new Set(r.attemptedIds||[]);
+    document.getElementById('testsHint').textContent=(r.tests||[]).length+' test series available';
+    grid.innerHTML=(r.tests||[]).map(t=>{
+      const solution=attempted.has(t.id)?' <button class="secondary" onclick="viewSolution(\''+esc(t.id)+'\')">📖 Solution</button>':'';
+      const action=t.attemptPolicy==='once'&&attempted.has(t.id)?'<button onclick="viewSolution(\''+esc(t.id)+'\')">📖 View Solution</button>':'<button onclick="startTest(\''+esc(t.id)+'\')">Start Test</button>'+solution;
+      return '<div class="card"><h3>📝 '+esc(t.title)+'</h3><p class="muted">'+esc(t.category)+' • '+esc(t.exam)+' • '+t.questionCount+' questions • '+t.duration+' min'+(t.languages&&t.languages.length>1?' • 🌐 '+t.languages.map(esc).join('/'):'')+'</p>'+(t.subjects&&t.subjects.length>1?'<p class="muted">Subjects: '+t.subjects.map(esc).join(', ')+'</p>':'')+'<p class="muted">'+(t.attemptPolicy==='once'?'🔒 One attempt only':'🔁 Reattempt allowed')+'</p>'+action+'</div>';
+    }).join('')||'<p class="muted">No test series published for this institute yet.</p>';
+  }catch(e){if(!currentUser){showSection('auth');msg('loginMsg','Please log in or register first to view Test Series.',false);return;}grid.innerHTML='<p class="muted">'+esc(e.message)+'</p>';}
 }
 
 window.changeAttemptPolicy = async function(id, value, reload){
@@ -1649,182 +1622,6 @@ window.viewSolution = async function(id){
 
 
 const fmtDate = d => new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
-let premiumData = null;
-async function loadPremium(){
-  const status = document.getElementById('premiumStatus'), plansBox = document.getElementById('premiumPlans'), pay = document.getElementById('premiumPay'), hist = document.getElementById('premiumHistory');
-  pay.classList.add('hidden'); pay.innerHTML = '';
-  if(!currentUser){ showSection('auth'); msg('loginMsg','Please log in as a student to get Premium.', false); return; }
-  if(currentUser.role !== 'student'){
-    status.innerHTML = '<p class="muted">Premium is for student accounts. Teachers and admins can already open every test series.</p>';
-    plansBox.innerHTML = ''; hist.innerHTML = ''; return;
-  }
-  try{
-    let { plans, payment } = await api('GET','/api/plans');
-    let gatewayReady = payment.gatewayEnabled === true;
-    let gatewayError = '';
-    const hasManualUpi=!!String(payment.upiId||'').trim();
-    if(!gatewayReady&&!gatewayError)gatewayError=hasManualUpi
-      ? 'Razorpay Test Mode is unavailable; manual UPI payment is available below.'
-      : 'No payment method is configured yet. Please contact the administrator.';
-    const mine = await api('GET','/api/subscription/mine');
-    premiumData = { plans, payment, mine, gatewayReady };
-    const pending = mine.requests.find(r=>r.status==='pending');
-    status.innerHTML = mine.active
-      ? `<h3>✅ Premium active</h3><p>${esc(mine.planName)} plan • valid until <b>${fmtDate(mine.expiresAt)}</b>. You can open every paid test series. Renewing adds time on top of what is left.</p>`
-      : `<h3>You are on the Free plan</h3><p class="muted">Get Premium once and open <b>all paid test series</b> — no per-test payment.</p>`;
-    if(gatewayError) status.innerHTML += `<p class="muted">${esc(gatewayError)} You can still use manual UPI if it is configured below.</p>`;
-    if(pending) status.innerHTML += `<p>⏳ Your payment of ₹${pending.amount} (${esc(pending.planName)}) is waiting for Admin verification.</p>`;
-    const savedPayment=readPendingGatewayPayment();
-    if(savedPayment&&savedPayment.studentId===currentUserId())status.innerHTML+='<p class="muted">A previous Razorpay payment still needs confirmation. <button type="button" class="secondary" onclick="retryPendingGatewayPayment()">Retry confirmation</button></p>';
-    plansBox.innerHTML = plans.length ? plans.map(p=>`
-      <div class="card" style="text-align:center">
-        <h3>${esc(p.name)}</h3>
-        <p style="font-size:30px;font-weight:800;margin:6px 0">₹${p.price}</p>
-        <p class="muted">${p.days} days • all paid test series</p>
-        <button ${pending?'disabled':''} onclick="choosePlan('${esc(p.id)}')">${mine.active?'Renew':'Choose'} plan</button>
-      </div>`).join('') : '<p class="muted">No plans are available yet. Please contact the administrator.</p>';
-    hist.innerHTML = mine.requests.length ? `<div class="table-wrap"><table><thead><tr><th>Plan</th><th>Amount</th><th>Transaction ID</th><th>Submitted</th><th>Status</th></tr></thead><tbody>
-      ${mine.requests.map(r=>`<tr><td>${esc(r.planName)}</td><td>₹${r.amount}</td><td>${esc(r.txnId)}</td><td>${fmtDate(r.requestedAt)}</td><td>${r.status==='approved'?'✅ Approved until '+fmtDate(r.expiresAt):r.status==='pending'?'⏳ Pending':'❌ Rejected'}</td></tr>`).join('')}
-    </tbody></table></div>` : '<p class="muted">No payments yet.</p>';
-  }catch(e){ status.innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
-}
-async function gw(base,path,body){return api(body?'POST':'GET',path,body);}
-function currentUserId(){return currentUser?.uid||currentUser?.id||'';}
-function readPendingGatewayPayment(){
-  try{
-    const raw=sessionStorage.getItem('cem_pending_gateway_payment');
-    if(!raw)return null;
-    const saved=JSON.parse(raw);
-    if(!saved||typeof saved!=='object')return null;
-    const savedAt=Number(saved.savedAt)||0;
-    if(!savedAt||Date.now()-savedAt>24*60*60*1000){
-      sessionStorage.removeItem('cem_pending_gateway_payment');
-      return null;
-    }
-    return saved;
-  }catch(_){return null;}
-}
-function savePendingGatewayPayment(response,base){
-  try{sessionStorage.setItem('cem_pending_gateway_payment',JSON.stringify({studentId:currentUserId(),gatewayUrl:base,response,savedAt:Date.now()}));}catch(_){}
-}
-async function confirmGatewayPayment(response,base){
-  await gw(base,'/api/verify',response);
-  try{sessionStorage.removeItem('cem_pending_gateway_payment');}catch(_){}
-}
-window.retryPendingGatewayPayment=async function(quiet=false){
-  const saved=readPendingGatewayPayment(),message=document.getElementById('premiumStatus');
-  if(!saved||saved.studentId!==currentUserId()){if(message&&!quiet)message.innerHTML='<p class="muted">No payment confirmation is waiting for this account.</p>';return;}
-  if(message&&!quiet)message.innerHTML='<p class="muted">Checking your Razorpay payment…</p>';
-  try{
-    await confirmGatewayPayment(saved.response,saved.gatewayUrl||'');
-    if(!quiet)alert('Payment confirmed — Premium is now active! 🎉');
-    await loadPremium();
-  }catch(e){
-    if(message&&!quiet)message.innerHTML=`<p class="muted">${esc(e.message)} Your payment details are saved for another confirmation attempt.</p><button type="button" class="secondary" onclick="retryPendingGatewayPayment()">Retry confirmation</button>`;
-  }
-};
-function loadRazorpay(){
-  return new Promise((ok,fail)=>{
-    if(window.Razorpay) return ok();
-    if(window._razorpayScriptPromise) return window._razorpayScriptPromise.then(ok,fail);
-    const sc = document.createElement('script'); sc.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    window._razorpayScriptPromise = new Promise((resolve,reject)=>{sc.onload=resolve;sc.onerror=()=>reject(new Error('Could not load the payment window. Check your internet connection.'));});
-    document.head.appendChild(sc);
-    window._razorpayScriptPromise.then(ok,fail);
-  });
-}
-window.payWithGateway = async function(planId){
-  const { payment } = premiumData, base = payment.gatewayUrl || '', m = document.getElementById('premMsg');
-  try{
-    if(!premiumData.gatewayReady) throw new Error('Razorpay Test Mode is not configured. Please contact the administrator.');
-    m.textContent = 'Opening secure payment…';
-    const order = await gw(base,'/api/orders',{ planId });
-    await loadRazorpay();
-    const rzp = new Razorpay({
-      key: order.keyId, amount: order.amount, currency: order.currency, order_id: order.orderId,
-      name: (document.getElementById('brandName')||{}).textContent || 'Competitive Exam Master',
-      description: order.planName + ' Premium', prefill:{ name:currentUser.name, email:currentUser.email },
-      theme:{ color:'#2563eb' },
-      handler: async resp => {
-        savePendingGatewayPayment(resp,base);
-        try{
-          m.textContent = 'Confirming payment…';
-          await confirmGatewayPayment(resp,base);
-          alert('Payment successful — Premium is now active! 🎉');
-          loadPremium();
-        }catch(e){
-          m.textContent=e.message+' Payment details are saved so you can retry confirmation without paying again.';
-          const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='Retry confirmation';retry.addEventListener('click',()=>retryPendingGatewayPayment());m.appendChild(retry);
-        }
-      },
-      modal:{ ondismiss:()=>{ m.textContent = 'Payment window closed.'; } }
-    });
-    rzp.on('payment.failed', response=>{ m.textContent = response.error?.description || 'Payment failed. Please try again.'; });
-    rzp.open();
-  }catch(e){ m.textContent = e.message; }
-};
-
-window.choosePlan = function(id, forceManual){
-  const { plans, payment } = premiumData;
-  const p = plans.find(x=>x.id===id); if(!p) return;
-  const pay = document.getElementById('premiumPay');
-  if(premiumData.gatewayReady && !forceManual){
-    pay.classList.remove('hidden');
-    pay.innerHTML = `
-      <h3>💳 Pay for ${esc(p.name)} Premium</h3>
-      <div style="background:var(--bg,#f3f5f9);border-radius:12px;padding:16px;text-align:center;margin:10px 0">
-        <div class="muted">Amount to pay</div><div style="font-size:36px;font-weight:800">₹${p.price}</div>
-        <div class="muted">${p.days} days of access to all paid test series</div>
-      </div>
-      <button style="width:100%;padding:14px;font-size:16px" onclick="payWithGateway('${esc(p.id)}')">🔒 Pay ₹${p.price} securely</button>
-      <p class="muted" style="text-align:center">UPI • Cards • Net banking • Wallets — Premium activates after Razorpay confirms payment.</p>
-      <p class="muted" style="text-align:center">Razorpay Test Mode is enabled for trial payments; test transactions do not charge real money.</p>
-      <p id="premMsg" class="muted" style="text-align:center"></p>
-      ${payment.upiId ? `<p style="text-align:center"><a href="javascript:void(0)" onclick="choosePlan('${esc(p.id)}',true)">Pay manually by UPI instead</a></p>` : ''}
-      <button class="secondary" onclick="document.getElementById('premiumPay').classList.add('hidden')">Cancel</button>`;
-    pay.scrollIntoView({behavior:'smooth'});
-    return;
-  }
-  const upi = payment.upiId;
-  if(!premiumData.gatewayReady&&!String(upi||'').trim()){
-    pay.classList.remove('hidden');
-    pay.innerHTML=`<h3>💳 ${esc(p.name)} Premium</h3><p class="muted">No payment method is ready for this plan. The administrator must configure Razorpay Test Mode on the server or add a UPI ID before students can pay.</p><button class="secondary" onclick="document.getElementById('premiumPay').classList.add('hidden')">Close</button>`;
-    pay.scrollIntoView({behavior:'smooth'});
-    return;
-  }
-  const link = upi ? `upi://pay?pa=${encodeURIComponent(upi)}&pn=${encodeURIComponent(payment.payeeName||'')}&am=${p.price}&cu=INR&tn=${encodeURIComponent('Premium '+p.name)}` : '';
-  pay.classList.remove('hidden');
-  pay.innerHTML = `
-    <h3>💳 Pay for ${esc(p.name)} Premium</h3>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;font-size:13px">
-      <span style="background:#eef2ff;color:#1e3a8a;padding:4px 10px;border-radius:999px">1 Choose plan ✓</span><span style="background:#eef2ff;color:#1e3a8a;padding:4px 10px;border-radius:999px"><b>2 Pay</b></span><span style="background:#eef2ff;color:#1e3a8a;padding:4px 10px;border-radius:999px">3 Enter transaction ID</span><span style="background:#eef2ff;color:#1e3a8a;padding:4px 10px;border-radius:999px">4 Admin verifies</span>
-    </div>
-    <div style="background:var(--bg,#f3f5f9);border-radius:12px;padding:16px;text-align:center">
-      <div class="muted">Amount to pay</div>
-      <div style="font-size:36px;font-weight:800">₹${p.price}</div>
-      <div class="muted">${p.days} days of access to all paid test series</div>
-    </div>
-    ${upi ? `
-      ${payment.qrDataUrl ? `<div style="text-align:center;margin:12px 0"><img src="${esc(payment.qrDataUrl)}" alt="UPI payment QR code" style="width:min(280px,80vw);max-height:280px;object-fit:contain;border:1px solid #e5e7eb;border-radius:12px;padding:8px;background:#fff"><p class="muted">Scan this QR code with any UPI app</p></div>` : ''}
-      <p style="margin:14px 0 4px"><b>Pay by UPI</b> to <b>${esc(payment.payeeName||'')}</b></p>
-      <p style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><code style="font-size:16px;padding:6px 10px;background:#eef2ff;border-radius:8px">${esc(upi)}</code>
-        <button class="secondary" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(upi)}');this.textContent='Copied ✓'">Copy UPI ID</button>
-        <a href="${link}"><button type="button">📲 Open UPI app</button></a></p>
-      ${payment.note ? `<p class="muted">${esc(payment.note)}</p>` : ''}
-    ` : '<p class="muted">Payment details have not been set up yet. Please contact the administrator.</p>'}
-    <div class="form-row"><label>After paying, enter the Transaction / UTR ID</label><input id="premTxn" placeholder="e.g. 412345678901"></div>
-    <button onclick="submitPremium('${esc(p.id)}')" ${upi?'':'disabled'}>Submit payment</button>
-    <button class="secondary" onclick="document.getElementById('premiumPay').classList.add('hidden')">Cancel</button>
-    <p id="premMsg" class="muted"></p>`;
-  pay.scrollIntoView({behavior:'smooth'});
-};
-window.submitPremium = async function(planId){
-  try{
-    const r = await api('POST','/api/subscription/request',{ planId, txnId: document.getElementById('premTxn').value });
-    alert(r.message); loadPremium();
-  }catch(e){ document.getElementById('premMsg').textContent = e.message; }
-};
-
 let tbTimerInterval = null;
 
 
@@ -2428,7 +2225,6 @@ window.submitNewTest = async function(){
   const exam = document.getElementById('ntExam').value.trim();
   const category = document.getElementById('ntCategory').value;
   const languages = getExamLanguages();
-  const type = document.getElementById('ntType').value;
   const duration = document.getElementById('ntDuration').value;
   const attemptPolicy = document.getElementById('ntAttempts').value;
   const questions = [];
@@ -2448,7 +2244,7 @@ window.submitNewTest = async function(){
     }));
   });
   try{
-    const r = await api('POST','/api/tests', { title, exam, category, subjects, languages, type, duration, attemptPolicy, questions });
+    const r = await api('POST','/api/tests', { title, exam, category, subjects, languages, duration, attemptPolicy, questions });
     msg('ntMsg', r.message, true);
     refreshModuleViews();
     document.getElementById('ntTitle').value='';
@@ -2484,10 +2280,10 @@ async function loadMyTests(){
 async function initializeAuthSession(){
 const user=await refreshUser();
   showSection('home');
-  if(user?.role==='student')retryPendingGatewayPayment(true);
 }
 showSection('home');
 loadBranding();
+loadInstitutesForRegistration();
 refreshModuleViews();
 initializeAuthSession().catch(()=>{currentUser=null;updateUI();showSection('home');});
 </script>
