@@ -327,6 +327,11 @@ function serveStatic(req,res) {
   return true;
 }
 
+async function ensureSeeds(){
+  const root=await get('cem2');
+  if(!root||typeof root!=='object'||Array.isArray(root)) await set('cem2',{});
+}
+
 const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
