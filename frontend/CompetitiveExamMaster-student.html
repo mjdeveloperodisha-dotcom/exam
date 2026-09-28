@@ -871,7 +871,7 @@ table.sec-table td{border-bottom-color:var(--border)}
         <div class="form-row"><label>Mobile Number</label><input id="teacherMobile" type="tel" placeholder="e.g. 9876543210"></div>
         <div class="form-row"><label>Institute</label><select id="teacherInstitute"><option value="">Loading institutes…</option></select><p class="muted">Choose the institute where you teach.</p></div><div class="form-row"><label>Email</label><input id="teacherEmail" type="email" placeholder="Email"></div>
         <div class="form-row"><label>Subject / Expertise</label><input id="teacherSubject" placeholder="e.g. Mathematics"></div>
-        <div class="form-row"><label>Password</label><input id="teacherPassword" type="password" placeholder="At least 6 characters" autocomplete="new-password" minlength="6"></div>
+        <div class="form-row"><label>Password</label><input id="teacherPassword" type="password" placeholder="At least 10 characters" autocomplete="new-password" minlength="10"></div>
         <div class="form-row"><label>Confirm Password</label><input id="teacherConfirmPassword" type="password" placeholder="Re-enter password" autocomplete="new-password" minlength="6"></div>
         <button class="primary-btn" style="width:100%" onclick="registerTeacher()">Register as Teacher</button>
         <p id="teacherMsg"></p>
@@ -1213,6 +1213,8 @@ window.loginUser = async function(){
     }catch(_){}
     msg('loginMsg','Login successful.',true);
     updateUI();
+    await refreshModuleViews();
+    if(currentUser.role==='teacher') await loadTeacherModules();
     if(currentUser.role==='admin') showSection('admin');
     else if(currentUser.role==='teacher') showSection('teacher');
     else showSection('home');
@@ -1257,7 +1259,7 @@ window.requestPasswordReset=async function(){
   try{
     const email=document.getElementById('forgotEmail').value.trim();if(!email)throw new Error('Enter your email address.');
     const r=await api('POST','/api/auth/forgot/request',{email});
-    document.getElementById('forgotBox').innerHTML='<input id="forgotEmail" type="hidden" value="'+esc(email)+'"><div class="form-row"><label>Reset code</label><input id="forgotOtp" inputmode="numeric" maxlength="6" placeholder="6-digit code"></div><div class="form-row"><label>New password</label><input id="forgotNewPassword" type="password" placeholder="At least 8 characters"></div><button class="secondary" onclick="confirmPasswordReset()">Reset Password</button><p id="forgotMsg"></p>';
+    document.getElementById('forgotBox').innerHTML='<input id="forgotEmail" type="hidden" value="'+esc(email)+'"><div class="form-row"><label>Reset code</label><input id="forgotOtp" inputmode="numeric" maxlength="6" placeholder="6-digit code"></div><div class="form-row"><label>New password</label><input id="forgotNewPassword" type="password" placeholder="At least 10 characters"></div><button class="secondary" onclick="confirmPasswordReset()">Reset Password</button><p id="forgotMsg"></p>';
     msg('forgotMsg',r.message,true);
   }catch(e){msg('forgotMsg',authError(e));}
 };
@@ -1452,7 +1454,14 @@ window.restoreBackup = async function(){
 let MODULES = [];
 
 async function refreshModuleViews(){
-  try{ MODULES = (await api('GET','/api/modules')).modules; }catch(e){ MODULES = []; }
+  if(!currentUser){
+    MODULES = [];
+    renderHomeModules();
+    renderCategoryOptions();
+    renderModuleLists();
+    return;
+  }
+  try{ MODULES = (await api('GET','/api/modules')).modules || []; }catch(e){ MODULES = []; }
   if(activeCategory && !MODULES.some(m=>m.name===activeCategory)) activeCategory = null;
   renderHomeModules();
   renderCategoryOptions();
@@ -2273,13 +2282,16 @@ async function loadMyTests(){
 
 
 async function initializeAuthSession(){
-const user=await refreshUser();
+  const user=await refreshUser();
+  if(user){
+    await refreshModuleViews();
+    if(user.role==='teacher') await loadTeacherModules();
+  }
   showSection('home');
 }
 showSection('home');
 loadBranding();
 loadInstitutesForRegistration();
-refreshModuleViews();
 initializeAuthSession().catch(()=>{currentUser=null;updateUI();showSection('home');});
 </script>
 </body>
