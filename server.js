@@ -23,6 +23,7 @@ loadEnv();
 
 const CFG = {
   port: Number(process.env.PORT || 4300),
+  trustProxy: process.env.TRUST_PROXY === 'true',
   dbUrl: process.env.FIREBASE_DATABASE_URL || '',
   projectId: process.env.FIREBASE_PROJECT_ID || '',
   clientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
@@ -222,6 +223,7 @@ const AUTH_SESSION_SECRET=process.env.AUTH_SESSION_SECRET||(process.env.NODE_ENV
 const ADMIN_OTP_SECRET=process.env.ADMIN_OTP_SECRET||AUTH_SESSION_SECRET;
 if(process.env.NODE_ENV==='production'&&AUTH_SESSION_SECRET.length<32)throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
 if(process.env.NODE_ENV==='production'&&(ADMIN_OTP_SECRET.length<32||ADMIN_OTP_SECRET===AUTH_SESSION_SECRET))throw new Error('ADMIN_OTP_SECRET must be configured as a separate random secret of at least 32 characters in production.');
+if(process.env.NODE_ENV==='production'&&!CFG.trustProxy)throw new Error('TRUST_PROXY=true must be configured in production behind the TLS reverse proxy.');
 const ADMIN_OTP_TTL_MS=10*60*1000;
 const SECURITY_ROOT='cem2/security';
 const SECURITY_OTP_PATH=SECURITY_ROOT+'/adminOtp';
@@ -229,7 +231,7 @@ const SECURITY_SESSION_PATH=SECURITY_ROOT+'/sessions';
 const SECURITY_RATE_PATH=SECURITY_ROOT+'/rateLimits';
 const rateBuckets=new Map();
 const adminOtpState=null;
-function clientIp(req){return String(req.headers['cf-connecting-ip']||req.headers['x-forwarded-for']||req.socket.remoteAddress||'').split(',')[0].trim().slice(0,80);}
+function clientIp(req){const forwarded=CFG.trustProxy?String(req.headers['cf-connecting-ip']||req.headers['x-forwarded-for']||'').split(',')[0].trim():'';return String(forwarded||req.socket.remoteAddress||'').slice(0,80);}
 function rateKeyPart(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,40);}
 function securityPathKey(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex');}
 function localRateLimit(req,key,limit,windowMs,identity=''){const k=key+':'+clientIp(req)+':'+rateKeyPart(identity),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
@@ -398,7 +400,7 @@ async function body(req) {
   });
 }
 
-function isHttps(req){return process.env.NODE_ENV==='production'||String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()==='https';}
+function isHttps(req){return CFG.trustProxy?String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()==='https':false;}
 function cookieBase(res){return 'Path=/; HttpOnly; '+(isHttps(res.req)?'Secure; ':'')+'SameSite=Strict; Max-Age=43200';}
 function setSessionCookie(res,token,portal){const name=portal==='admin'?'cem_admin_session':portal==='institute'?'cem_institute_session':'cem_user_session';res.setHeader('Set-Cookie',name+'='+encodeURIComponent(token)+'; '+cookieBase(res));}
 function clearSessionCookie(res,portal){const base='Path=/; HttpOnly; '+(isHttps(res.req)?'Secure; ':'')+'SameSite=Strict; Max-Age=0';const names=portal==='admin'?['cem_admin_session']:portal==='institute'?['cem_institute_session']:portal==='student'?['cem_user_session']:['cem_admin_session','cem_institute_session','cem_user_session'];res.setHeader('Set-Cookie',names.map(n=>n+'=; '+base));}
@@ -406,7 +408,7 @@ function csrfCookieBase(req){return 'Path=/; '+(isHttps(req)?'Secure; ':'')+'Sam
 function createCsrfToken(){const random=crypto.randomBytes(32).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+random).digest('base64url');return random+'.'+sig;}
 function setCsrfCookie(res,token){res.setHeader('Set-Cookie',(res.getHeader('Set-Cookie')||[]).concat(['cem_csrf='+encodeURIComponent(token)+'; '+csrfCookieBase(res.req)]));}
 function validCsrfToken(token){const parts=String(token||'').split('.');if(parts.length!==2||!/^[A-Za-z0-9_-]{32,100}$/.test(parts[0]))return false;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+parts[0]).digest('base64url');return parts[1].length===expected.length&&crypto.timingSafeEqual(Buffer.from(parts[1]),Buffer.from(expected));}
-function validateCsrf(req){const origin=String(req.headers.origin||'').trim();const referer=String(req.headers.referer||'').trim();const proto=String(req.headers['x-forwarded-proto']|| (isHttps(req)?'https':'http')).split(',')[0].trim();const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim();const target=proto+'://'+host;const source=origin|| (referer?(()=>{try{return new URL(referer).origin}catch(_){return ''}})():'');if(source && source!==target)throw Object.assign(new Error('Cross-site request blocked.'),{status:403});if(String(req.headers['sec-fetch-site']||'').toLowerCase()==='cross-site')throw Object.assign(new Error('Cross-site request blocked.'),{status:403});const cookies=parseCookies(req),cookie=decodeURIComponent(String(cookies.cem_csrf||'')),header=String(req.headers['x-csrf-token']||'');if(!cookie||!header||cookie!==header||!validCsrfToken(header))throw Object.assign(new Error('CSRF validation failed. Refresh the page and try again.'),{status:403});}
+function validateCsrf(req){const origin=String(req.headers.origin||'').trim();const referer=String(req.headers.referer||'').trim();const proto=CFG.trustProxy?String(req.headers['x-forwarded-proto']||'').split(',')[0].trim():(isHttps(req)?'https':'http');const host=(CFG.trustProxy?String(req.headers['x-forwarded-host']||''):String(req.headers.host||'')).split(',')[0].trim();const target=proto+'://'+host;const source=origin|| (referer?(()=>{try{return new URL(referer).origin}catch(_){return ''}})():'');if(source && source!==target)throw Object.assign(new Error('Cross-site request blocked.'),{status:403});if(String(req.headers['sec-fetch-site']||'').toLowerCase()==='cross-site')throw Object.assign(new Error('Cross-site request blocked.'),{status:403});const cookies=parseCookies(req),cookie=decodeURIComponent(String(cookies.cem_csrf||'')),header=String(req.headers['x-csrf-token']||'');if(!cookie||!header||cookie!==header||!validCsrfToken(header))throw Object.assign(new Error('CSRF validation failed. Refresh the page and try again.'),{status:403});}
 function securityHeaders(req){const h={'X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=(), payment=()','Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Resource-Policy':'same-origin','X-DNS-Prefetch-Control':'off','X-Permitted-Cross-Domain-Policies':'none','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"};if(isHttps(req))h['Strict-Transport-Security']='max-age=31536000; includeSubDomains';return h;}
 function send(res,status,data){const h=securityHeaders(res.req);Object.assign(h,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization, X-CEM-Portal, X-CSRF-Token','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.writeHead(status,h);res.end(JSON.stringify(data));}
 
