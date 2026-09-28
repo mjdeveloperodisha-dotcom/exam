@@ -222,17 +222,63 @@ const AUTH_SESSION_SECRET=process.env.AUTH_SESSION_SECRET||(process.env.NODE_ENV
 const ADMIN_OTP_SECRET=process.env.ADMIN_OTP_SECRET||AUTH_SESSION_SECRET;
 if(process.env.NODE_ENV==='production'&&AUTH_SESSION_SECRET.length<32)throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
 const ADMIN_OTP_TTL_MS=10*60*1000;
-const adminOtpState={hash:'',expiresAt:0,attempts:0,sentAt:0};
+const SECURITY_ROOT='cem2/security';
+const SECURITY_OTP_PATH=SECURITY_ROOT+'/adminOtp';
+const SECURITY_SESSION_PATH=SECURITY_ROOT+'/sessions';
+const SECURITY_RATE_PATH=SECURITY_ROOT+'/rateLimits';
 const rateBuckets=new Map();
+const adminOtpState=null;
 function clientIp(req){return String(req.headers['cf-connecting-ip']||req.headers['x-forwarded-for']||req.socket.remoteAddress||'').split(',')[0].trim().slice(0,80);}
-function rateKeyPart(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,32);}
-function rateLimit(req,key,limit,windowMs,identity=''){const k=key+':'+clientIp(req)+':'+rateKeyPart(identity),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
+function rateKeyPart(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex').slice(0,40);}
+function securityPathKey(value){return crypto.createHash('sha256').update(String(value||'')).digest('hex');}
+function localRateLimit(req,key,limit,windowMs,identity=''){const k=key+':'+clientIp(req)+':'+rateKeyPart(identity),now=Date.now(),b=rateBuckets.get(k);if(!b||now-b.start>=windowMs){rateBuckets.set(k,{start:now,count:1});return;}b.count++;if(b.count>limit)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});}
+async function rateLimit(req,key,limit,windowMs,identity=''){
+  if(!db||useMemDb){localRateLimit(req,key,limit,windowMs,identity);return;}
+  const now=Date.now(),bucketId=securityPathKey(key+'|'+clientIp(req)+'|'+identity),ref=db.ref(SECURITY_RATE_PATH+'/'+bucketId);
+  const tx=await ref.transaction(cur=>{
+    const b=cur&&typeof cur==='object'?cur:null;
+    if(!b||!Number.isFinite(Number(b.windowStart))||now-Number(b.windowStart)>=windowMs)
+      return {windowStart:now,count:1,expiresAt:now+windowMs};
+    if(Number(b.blockedUntil)>now)
+      return {...b,lastRejectedAt:now};
+    const count=Number(b.count)||0;
+    if(count>=limit)
+      return {...b,blockedUntil:Number(b.blockedUntil)||now+windowMs,lastRejectedAt:now};
+    return {...b,count:count+1};
+  },undefined,false);
+  const b=tx.snapshot.val()||{};
+  if(Number(b.blockedUntil)>now)throw Object.assign(new Error('Too many requests. Please wait and try again.'),{status:429});
+}
 setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
 function hashAdminOtp(otp){return crypto.createHmac('sha256',ADMIN_OTP_SECRET).update(String(otp)).digest('hex');}
-function createAdminSession(uidValue){const payload=Buffer.from(JSON.stringify({uid:uidValue,email:CFG.admin.email,exp:Date.now()+12*60*60*1000})).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(payload).digest('base64url');return 'ADM1.'+payload+'.'+sig;}
-function verifyAdminSession(token){if(!String(token||'').startsWith('ADM1.'))return null;const p=String(token).split('.');if(p.length!==3)return null;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(p[1]).digest('base64url');if(p[2].length!==expected.length||!crypto.timingSafeEqual(Buffer.from(p[2]),Buffer.from(expected)))return null;try{const x=JSON.parse(Buffer.from(p[1],'base64url').toString('utf8'));return x.email===CFG.admin.email&&Number(x.exp)>=Date.now()?x:null;}catch(_){return null;}}
-function createUserSession(uidValue,emailValue,roleValue,nameValue,instituteId=''){const payload=Buffer.from(JSON.stringify({uid:uidValue,email:emailValue,role:roleValue,name:nameValue||'User',instituteId:String(instituteId||''),exp:Date.now()+12*60*60*1000})).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(payload).digest('base64url');return 'USR1.'+payload+'.'+sig;}
-function verifyUserSession(token){if(!String(token||'').startsWith('USR1.'))return null;const p=String(token).split('.');if(p.length!==3)return null;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(p[1]).digest('base64url');if(p[2].length!==expected.length||!crypto.timingSafeEqual(Buffer.from(p[2]),Buffer.from(expected)))return null;try{const x=JSON.parse(Buffer.from(p[1],'base64url').toString('utf8'));return Number(x.exp)>=Date.now()?x:null;}catch(_){return null;}}
+function hashSessionToken(token){return crypto.createHash('sha256').update(String(token||'')).digest('hex');}
+function sessionCookieToken(){return crypto.randomBytes(32).toString('base64url');}
+async function createServerSession(record){
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure session storage is unavailable.'),{status:503});
+    const token=sessionCookieToken(),hash=hashSessionToken(token);await set(SECURITY_SESSION_PATH+'/'+hash,{...record,tokenFallback:token});return token;
+  }
+  const token=sessionCookieToken(),hash=hashSessionToken(token);
+  await set(SECURITY_SESSION_PATH+'/'+hash,{...record,tokenHash:hash});
+  return token;
+}
+async function verifyServerSession(token){
+  const raw=String(token||'');if(!/^[A-Za-z0-9_-]{40,100}$/.test(raw))return null;
+  const hash=hashSessionToken(raw),s=await get(SECURITY_SESSION_PATH+'/'+hash);
+  if(!s||s.tokenFallback&&s.tokenFallback!==raw)return null;
+  if(Number(s.expiresAt)<=Date.now()||s.revokedAt)return null;
+  return {...s,sessionHash:hash};
+}
+async function revokeServerSession(token){
+  const raw=String(token||'');if(!/^[A-Za-z0-9_-]{40,100}$/.test(raw))return;
+  const hash=hashSessionToken(raw);
+  if(!db||useMemDb){const s=await get(SECURITY_SESSION_PATH+'/'+hash);if(s)await update(SECURITY_SESSION_PATH+'/'+hash,{revokedAt:nowIso()});return;}
+  await update(SECURITY_SESSION_PATH+'/'+hash,{revokedAt:nowIso()});
+}
+async function createAdminSession(uidValue){return createServerSession({uid:uidValue,email:CFG.admin.email,role:'admin',createdAt:nowIso(),expiresAt:Date.now()+12*60*60*1000});}
+async function verifyAdminSession(token){const s=await verifyServerSession(token);return s&&s.role==='admin'&&s.email===CFG.admin.email?s:null;}
+async function createUserSession(uidValue,emailValue,roleValue,nameValue,instituteId=''){return createServerSession({uid:uidValue,email:emailValue,role:roleValue,name:nameValue||'User',instituteId:String(instituteId||''),createdAt:nowIso(),expiresAt:Date.now()+12*60*60*1000});}
+async function verifyUserSession(token){const s=await verifyServerSession(token);return s&&['institute','student','teacher'].includes(s.role)?s:null;}
 function publicUser(u){if(!u)return null;const x={...u};delete x.password;delete x.passwordHash;delete x.resetToken;delete x.resetTokenExpiry;return x;}
 function parseCookies(req){const o={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)o[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());}return o;}
 async function sendEmail(to, subject, html, text='') {
@@ -335,7 +381,7 @@ async function ensureSeeds(){
 const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
-  verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,setSessionCookie,clearSessionCookie,
+  verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
   body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET
 });
 async function route(req,res){return routeV2(req,res);}
