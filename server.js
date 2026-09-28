@@ -454,13 +454,14 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp,createPasswordResetChallenge,invalidatePasswordResetChallenge,consumePasswordResetChallenge
+  body,errorStatus,publicUser,send,escapeHtml,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp,createPasswordResetChallenge,invalidatePasswordResetChallenge,consumePasswordResetChallenge
 });
 async function route(req,res){return routeV2(req,res);}
 
 const server=http.createServer(async(req,res)=>{
   server.headersTimeout=65000; server.requestTimeout=120000; server.keepAliveTimeout=5000;
   try {
+    if(process.env.NODE_ENV==='production'&&!isHttps(req)) return send(res,400,{error:'HTTPS is required.'});
     if(req.url.startsWith('/api/')) return await route(req,res);
     if(serveStatic(req,res)) return;
     send(res,404,{error:'Not found.'});
