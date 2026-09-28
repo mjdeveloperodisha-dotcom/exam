@@ -664,8 +664,11 @@ table.sec-table td{border-bottom-color:var(--border)}
 
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-</head>
-<body>
+<style>
+#cemBusyOverlay{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:9998}#cemBusyOverlay.show{display:flex}.cem-busy-card{background:#fff;border-radius:18px;padding:22px 28px;box-shadow:0 20px 60px #0003;text-align:center;font-weight:800;color:#172033}.cem-spinner{width:30px;height:30px;margin:0 auto 12px;border:3px solid #dbe4ff;border-top-color:#315ee7;border-radius:50%;animation:cemspin .7s linear infinite}@keyframes cemspin{to{transform:rotate(360deg)}}
+#cemPopup{position:fixed;inset:0;background:rgba(15,23,42,.38);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:9999;padding:20px}.cem-popup-card{width:min(460px,100%);background:#fff;border-radius:20px;padding:24px;box-shadow:0 24px 80px #0004}.cem-popup-card h3{margin:0 0 8px}.cem-popup-card p{white-space:pre-line;color:#52627a;line-height:1.6}.cem-popup-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+</style></head>
+<body><div id="cemBusyOverlay" aria-live="polite"><div class="cem-busy-card"><div class="cem-spinner"></div><div id="cemBusyText">Please wait…</div></div></div><div id="cemPopup" role="dialog" aria-modal="true"><div class="cem-popup-card"><h3 id="cemPopupTitle"></h3><p id="cemPopupText"></p><div class="cem-popup-actions" id="cemPopupActions"></div></div></div>
 <header>
 <div class="brand-row">
   <img id="brandLogo" class="hidden" alt="logo">
@@ -695,7 +698,7 @@ table.sec-table td{border-bottom-color:var(--border)}
     <p>Build confidence with focused practice, timed mock exams, and clear results that help you decide what to work on next.</p>
     <div class="hero-actions">
       <button class="hero-primary" onclick="showTests(null)">Explore test series <span aria-hidden="true">→</span></button>
-      <button class="hero-secondary" onclick="showSection('auth');showAuthTab('register')">Create a free account</button>
+      <button id="heroAccountAction" class="hero-secondary" onclick="showSection('auth');showAuthTab('register')">Create an account</button>
     </div>
   </div>
   <div class="hero-visual" aria-hidden="true">
@@ -1006,11 +1009,18 @@ async function getCsrfToken(){
   if(!r.ok||!data.csrfToken) throw new Error('Security token initialization failed. Refresh the page.');
   window.__cemCsrfToken=data.csrfToken; return data.csrfToken;
 }
+let cemBusyCount=0;
+function setCemBusy(on,text='Please wait…'){cemBusyCount=Math.max(0,cemBusyCount+(on?1:-1));document.getElementById('cemBusyOverlay')?.classList.toggle('show',cemBusyCount>0);if(text)document.getElementById('cemBusyText').textContent=text}
+function popup(title,text,actions=[{label:'OK',value:true,primary:true}]){return new Promise(resolve=>{const p=document.getElementById('cemPopup'),a=document.getElementById('cemPopupActions');document.getElementById('cemPopupTitle').textContent=title;document.getElementById('cemPopupText').textContent=String(text||'');a.innerHTML=actions.map((x,i)=>'<button class="primary-btn '+(x.primary?'':'secondary')+'" data-i="'+i+'">'+esc(x.label)+'</button>').join('');a.querySelectorAll('button').forEach(b=>b.onclick=()=>{p.style.display='none';resolve(actions[Number(b.dataset.i)].value)});p.style.display='flex'})}
+function confirmPopup(text){return popup('Confirm action',text,[{label:'Cancel',value:false},{label:'Confirm',value:true,primary:true}])}
 async function api(method,url,body){
-  const headers={'Content-Type':'application/json','X-CEM-Portal':'student'};
-  if(method!=='GET'&&method!=='HEAD'&&method!=='OPTIONS') headers['X-CSRF-Token']=await getCsrfToken();
-  const r=await fetch(url,{method,headers,credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body)});
-  const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;
+  const mut=!['GET','HEAD','OPTIONS'].includes(method);if(mut)setCemBusy(true,'Please wait…');
+  try{
+    const headers={'Content-Type':'application/json','X-CEM-Portal':'student'};
+    if(mut) headers['X-CSRF-Token']=await getCsrfToken();
+    const r=await fetch(url,{method,headers,credentials:'same-origin',body:body===undefined?undefined:JSON.stringify(body),cache:'no-store'});
+    const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||'Request failed.');return data;
+  }finally{if(mut)setCemBusy(false)}
 }
 function esc(value){const s=String(value??'');return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function msg(id,text,ok=false){const el=document.getElementById(id);if(!el)return;el.textContent=String(text||'');el.className=ok?'success':'error';}
@@ -1165,7 +1175,7 @@ window.registerStudent = async function(){
     document.getElementById('loginPassword').value='';
     showSection('auth');
     showAuthTab('login');
-    msg('loginMsg','Student account created. Please sign in with your email and password.',true);
+    msg('loginMsg','Student account created. Wait for Institute Admin approval before signing in.',true);
   }catch(e){ msg('studentMsg',authError(e)); }
   finally{ if(btn){btn.classList.remove('loading');btn.disabled=false;btn.textContent='Register as Student';} }
 };
@@ -1242,6 +1252,11 @@ window.logout=async function(){try{await api('POST','/api/auth/logout');}catch(_
 function updateUI(){
   ['adminNav','teacherNav','logoutNav','accountNav'].forEach(id=>document.getElementById(id)?.classList.add('hidden'));
   document.getElementById('authNav')?.classList.remove('hidden');
+  const heroAction=document.getElementById('heroAccountAction');
+  if(heroAction){
+    if(currentUser){heroAction.textContent='My account';heroAction.onclick=()=>showSection('account');}
+    else{heroAction.textContent='Create an account';heroAction.onclick=()=>{showSection('auth');showAuthTab('register')};}
+  }
   if(currentUser){
     document.getElementById('logoutNav')?.classList.remove('hidden');
     document.getElementById('accountNav')?.classList.remove('hidden');
@@ -1304,16 +1319,16 @@ window.changePassword=async function(){
 
 window.approveTeacher = async function(id, approved){
   try{ await api('POST', '/api/admin/teachers/'+encodeURIComponent(id)+'/approve', { approved }); renderAdmin(); }
-  catch(e){ alert(e.message); }
+  catch(e){ await popup('Operation failed',e.message); }
 };
 window.blockUser = async function(id, blocked){
   try{ await api('POST', '/api/admin/users/'+encodeURIComponent(id)+'/block', { blocked }); renderAdmin(); }
-  catch(e){ alert(e.message); }
+  catch(e){ await popup('Operation failed',e.message); }
 };
 window.deleteUser = async function(id, name){
-  if(!confirm(`Delete the account "${name}"? This can't be undone.`)) return;
+  if(!await confirmPopup(`Delete the account "${name}"? This can't be undone.`)) return;
   try{ await api('DELETE', '/api/admin/users/'+encodeURIComponent(id)); renderAdmin(); }
-  catch(e){ alert(e.message); }
+  catch(e){ await popup('Operation failed',e.message); }
 };
 
 function moduleAccessCell(x){
@@ -1324,7 +1339,7 @@ function moduleAccessCell(x){
 }
 window.setModuleAccess = async function(id, allowed){
   try{ await api('POST', '/api/admin/teachers/'+encodeURIComponent(id)+'/module-access', { allowed }); renderAdmin(); }
-  catch(e){ alert(e.message); }
+  catch(e){ await popup('Operation failed',e.message); }
 };
 
 async function renderAdmin(){
@@ -1372,7 +1387,7 @@ async function loadPurchaseRequests(){
 }
 window.decidePurchase = async function(id, approved){
   try{ await api('POST', '/api/purchases/'+encodeURIComponent(id)+'/decide', { approved }); loadPurchaseRequests(); }
-  catch(e){ alert(e.message); }
+  catch(e){ await popup('Operation failed',e.message); }
 };
 
 
@@ -1440,7 +1455,7 @@ window.downloadBackup = async function(){
 window.restoreBackup = async function(){
   const file = document.getElementById('restoreFile').files[0];
   if(!file){ msg('backupMsg', 'Choose a backup JSON file first.'); return; }
-  if(!confirm('This will overwrite all current users, exam modules, test series and settings with the contents of this file. Continue?')) return;
+  if(!await confirmPopup('This will overwrite all current users, exam modules, test series and settings with the contents of this file. Continue?')) return;
   try{
     const text = await file.text();
     const parsed = JSON.parse(text);
@@ -1564,7 +1579,7 @@ window.deleteModule = async function(btn, p){
   const question = count
     ? `Delete the module "${name}" together with its ${count} test series and their access requests? This can't be undone.`
     : `Delete the module "${name}"?`;
-  if(!confirm(question)) return;
+  if(!await confirmPopup(question)) return;
   try{
     const r = await api('DELETE','/api/modules/'+encodeURIComponent(id));
     msg(p+'ModMsg', r.message, true);
@@ -1611,8 +1626,8 @@ async function loadTests(){
 }
 
 window.changeAttemptPolicy = async function(id, value, reload){
-  try{ const r = await api('POST','/api/tests/'+encodeURIComponent(id)+'/attempts', { attemptPolicy: value }); alert(r.message); }
-  catch(e){ alert(e.message); }
+  try{ const r = await api('POST','/api/tests/'+encodeURIComponent(id)+'/attempts', { attemptPolicy: value }); await popup('Success',r.message); }
+  catch(e){ await popup('Operation failed',e.message); }
   if(reload) reload();
 };
 
@@ -1621,7 +1636,7 @@ window.viewSolution = async function(id){
     const r = await api('GET','/api/tests/'+encodeURIComponent(id)+'/solution');
     showResultScreen(r);
     document.getElementById('result').scrollIntoView({behavior:'smooth'});
-  }catch(e){ alert(e.message); }
+  }catch(e){ await popup('Operation failed',e.message); }
 };
 
 
@@ -1633,7 +1648,7 @@ window.startTest = async function(id){
   try{
     pendingTest = await api('GET', '/api/tests/'+encodeURIComponent(id));
   }catch(e){
-    alert(e.message);
+    await popup('Operation failed',e.message);
     if(!currentUser) showSection('auth'); else loadTests();
     return;
   }
@@ -1669,7 +1684,7 @@ window.beginExam = async function(){
   if(!pendingTest) return;
   let started;
   try{ started=await api('POST','/api/tests/'+encodeURIComponent(pendingTest.id)+'/start',{}); }
-  catch(e){ alert(e.message); return; }
+  catch(e){ await popup('Operation failed',e.message); return; }
   activeTest = started;
   pendingTest = null;
   activeLanguage = document.getElementById('utLanguage').value || null;
@@ -1895,7 +1910,7 @@ window.submitTest = async function(){
     exitExamFullscreen();
     const r = await api('POST', '/api/tests/'+encodeURIComponent(activeTest.id)+'/submit', { attemptId: activeTest.attemptId, answers: activeAnswers, timeBySubject: activeTimeBySubject });
     showResultScreen(r);
-  }catch(e){ alert(e.message); }
+  }catch(e){ await popup('Operation failed',e.message); }
 };
 window.showResultScreen = function(r){
     lastResult = r;
@@ -2131,7 +2146,7 @@ window.applySectionDefaults = function(input){
   sec.querySelectorAll('.q-marks').forEach(i=>i.value = m);
   sec.querySelectorAll('.q-neg').forEach(i=>i.value = n);
 };
-window.removeSection = function(btn){
+window.removeSection = async function(btn){
   const sec = btn.closest('.nt-sec');
   const n = sec.querySelectorAll('.qbuilder').length;
   if(n && !confirm('Remove the section "'+sec.dataset.name+'" and its '+n+' question(s)?')) return;
@@ -2261,12 +2276,12 @@ window.submitNewTest = async function(){
 };
 
 window.deleteTest = async function(id, title){
-  if(!confirm('Delete the test series "'+title+'"? This cannot be undone.')) return;
+  if(!await confirmPopup('Delete the test series "'+title+'"? This cannot be undone.')) return;
   try{
     await api('DELETE', '/api/tests/'+encodeURIComponent(id));
     loadMyTests();
     refreshModuleViews();
-  }catch(e){ alert(e.message); }
+  }catch(e){ await popup('Operation failed',e.message); }
 };
 
 async function loadMyTests(){
