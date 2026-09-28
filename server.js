@@ -277,8 +277,43 @@ async function revokeServerSession(token){
 }
 async function createAdminSession(uidValue){return createServerSession({uid:uidValue,email:CFG.admin.email,role:'admin',createdAt:nowIso(),expiresAt:Date.now()+12*60*60*1000});}
 async function verifyAdminSession(token){const s=await verifyServerSession(token);return s&&s.role==='admin'&&s.email===CFG.admin.email?s:null;}
-async function createUserSession(uidValue,emailValue,roleValue,nameValue,instituteId=''){return createServerSession({uid:uidValue,email:emailValue,role:roleValue,name:nameValue||'User',instituteId:String(instituteId||''),createdAt:nowIso(),expiresAt:Date.now()+12*60*60*1000});}
+async function createUserSession(uidValue,emailValue,roleValue,nameValue,instituteId='',authVersion=1){return createServerSession({uid:uidValue,email:emailValue,role:roleValue,name:nameValue||'User',instituteId:String(instituteId||''),authVersion:Number(authVersion)||1,createdAt:nowIso(),expiresAt:Date.now()+12*60*60*1000});}
 async function verifyUserSession(token){const s=await verifyServerSession(token);return s&&['institute','student','teacher'].includes(s.role)?s:null;}
+async function issueAdminOtp({email,hash,expiresAt,requestTimestamp}){
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure OTP storage is unavailable.'),{status:503});
+    return false;
+  }
+  const ref=db.ref(SECURITY_OTP_PATH);
+  const now=Number(requestTimestamp)||Date.now(),state={email,hash,expiry:Number(expiresAt),attempts:0,consumed:false,requestTimestamp:now,createdAt:new Date(now).toISOString(),consumedAt:null};
+  const tx=await ref.transaction(cur=>{
+    const current=cur&&typeof cur==='object'?cur:null;
+    if(current&&!current.consumed&&Number(current.expiry)>now&&now-Number(current.requestTimestamp||0)<60000)return current;
+    return state;
+  },undefined,false);
+  const saved=tx.snapshot.val()||{};
+  if(saved.requestTimestamp!==now||saved.hash!==hash)throw Object.assign(new Error('Please wait 60 seconds before requesting another OTP.'),{status:429});
+  return true;
+}
+async function consumeAdminOtp(otp){
+  const now=Date.now(),attemptHash=hashAdminOtp(otp);
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure OTP storage is unavailable.'),{status:503});
+    return {ok:false,reason:'unavailable'};
+  }
+  const ref=db.ref(SECURITY_OTP_PATH);
+  const tx=await ref.transaction(cur=>{
+    const current=cur&&typeof cur==='object'?{...cur}:null;
+    if(!current||current.consumed||!current.hash||Number(current.expiry)<=now||Number(current.attempts||0)>=5)return current;
+    const attempts=Number(current.attempts||0)+1;
+    if(attemptHash===String(current.hash))return {...current,attempts,consumed:true,verified:true,consumedAt:new Date(now).toISOString()};
+    return {...current,attempts,consumed:attempts>=5,verified:false,consumedAt:attempts>=5?new Date(now).toISOString():current.consumedAt||null};
+  },undefined,false);
+  const saved=tx.snapshot.val()||{};
+  if(saved.verified===true&&saved.consumed===true)return {ok:true};
+  if(!saved.hash||saved.consumed||Number(saved.expiry)<=now||Number(saved.attempts||0)>=5)return {ok:false,reason:'locked'};
+  return {ok:false,reason:'incorrect',attempts:Number(saved.attempts||0)};
+}
 function publicUser(u){if(!u)return null;const x={...u};delete x.password;delete x.passwordHash;delete x.resetToken;delete x.resetTokenExpiry;return x;}
 function parseCookies(req){const o={};for(const part of String(req.headers.cookie||'').split(';')){const i=part.indexOf('=');if(i>0)o[part.slice(0,i).trim()]=decodeURIComponent(part.slice(i+1).trim());}return o;}
 async function sendEmail(to, subject, html, text='') {
@@ -382,7 +417,7 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET
+  body,errorStatus,publicUser,send,escapeHtml,adminOtpState,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp
 });
 async function route(req,res){return routeV2(req,res);}
 
