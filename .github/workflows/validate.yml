@@ -26,7 +26,7 @@ jobs:
           PY
           node --check /tmp/CompetitiveExamMaster-student.js
           node --check /tmp/CompetitiveExamMaster-admin.js
-      node --check /tmp/CompetitiveExamMaster-institute.js
+      - run: node --check /tmp/CompetitiveExamMaster-institute.js
       - name: Security hardening checks
         shell: bash
         run: |
