@@ -36,18 +36,18 @@ jobs:
           student=Path("frontend/CompetitiveExamMaster-student.html").read_text(encoding="utf-8")
           admin=Path("frontend/CompetitiveExamMaster-admin.html").read_text(encoding="utf-8")
           institute=Path("frontend/CompetitiveExamMaster-institute.html").read_text(encoding="utf-8")
+          router=Path("v2-router.js").read_text(encoding="utf-8")
           for marker in [
-              "const locks=(await allMap('attemptLocks/'",
-              "const scores=(await allMap('scoreIndex/'",
-              "Object.values((await allMap('scoreIndex/'+t.id))||{})",
-              "'examAttempts'",
-              "'webhookEvents'",
               "validateCsrf(req)","X-CSRF-Token","Strict-Transport-Security",
-              "Permissions-Policy","Cross-Origin-Opener-Policy","rateLimit(req,'api-global'",
-              "/api/auth/csrf","examAttempts/","serverStartedAt","serverExpiresAt",
-              "serverCalculated:true","razorpayApi('GET','/payments/'"
+              "Permissions-Policy","Cross-Origin-Opener-Policy","rateLimit(req,'api-global-v2'",
+              "/api/auth/csrf","cem2","serverStartedAt","serverExpiresAt",
+              "serverCalculated:true","attemptPolicy","transaction("
           ]:
-              assert marker in server, f"missing server security marker: {marker}"
+              source=server+"\n"+router
+              assert marker in source, f"missing security marker: {marker}"
+          assert "razorpay" not in server.lower()
+          assert "subscription" not in server.lower()
+          assert "payment-settings" not in server.lower()
           for marker in ["getCsrfToken()","X-CSRF-Token","/start',{}"]:
               assert marker in student, f"missing student security marker: {marker}"
           for marker in ["getCsrfToken()","X-CSRF-Token"]:
