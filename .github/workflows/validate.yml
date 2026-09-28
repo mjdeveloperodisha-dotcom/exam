@@ -13,6 +13,7 @@ jobs:
         with:
           node-version: 22
       - run: node --check server.js
+      - run: node --check v2-router.js
       - name: Check inline browser JavaScript
         shell: bash
         run: |
@@ -55,6 +56,13 @@ jobs:
           for marker in ["X-CEM-Portal","X-CSRF-Token","/api/institute/users","/api/modules"]:
               assert marker in institute, f"missing institute security marker: {marker}"
           assert "attemptId:crypto.randomBytes(18)" not in server
+          assert "adminOtpState={hash:" not in server
+          assert "createAdminSession(uidValue){const payload=" not in server
+          assert "function rateLimit(req,key,limit,windowMs,identity='')" not in server
+          assert "P.resets+'/'+u.uid" not in router
+          assert "await revokeServerSession" in router
+          assert "await verifyAdminSession" in router
+          assert "await verifyUserSession" in router
           print("Security hardening static checks passed.")
           PY
 
