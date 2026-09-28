@@ -221,6 +221,7 @@ function ownsTest(user,test) {
 const AUTH_SESSION_SECRET=process.env.AUTH_SESSION_SECRET||(process.env.NODE_ENV==='production'?'':crypto.randomBytes(32).toString('hex'));
 const ADMIN_OTP_SECRET=process.env.ADMIN_OTP_SECRET||AUTH_SESSION_SECRET;
 if(process.env.NODE_ENV==='production'&&AUTH_SESSION_SECRET.length<32)throw new Error('AUTH_SESSION_SECRET must be configured with at least 32 characters in production.');
+if(process.env.NODE_ENV==='production'&&(ADMIN_OTP_SECRET.length<32||ADMIN_OTP_SECRET===AUTH_SESSION_SECRET))throw new Error('ADMIN_OTP_SECRET must be configured as a separate random secret of at least 32 characters in production.');
 const ADMIN_OTP_TTL_MS=10*60*1000;
 const SECURITY_ROOT='cem2/security';
 const SECURITY_OTP_PATH=SECURITY_ROOT+'/adminOtp';
