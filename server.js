@@ -253,6 +253,30 @@ async function rateLimit(req,key,limit,windowMs,identity=''){
 }
 setInterval(()=>{const cutoff=Date.now()-3600000;for(const [k,v] of rateBuckets)if(v.start<cutoff)rateBuckets.delete(k);},900000).unref();
 function hashAdminOtp(otp){return crypto.createHmac('sha256',ADMIN_OTP_SECRET).update(String(otp)).digest('hex');}
+async function auditEvent(req,event,actorId='',actorRole='',details={}){
+  if(!db||useMemDb){
+    if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Security audit storage is unavailable.'),{status:503});
+    return;
+  }
+  const safe={};
+  for(const [k,v] of Object.entries(details||{})){
+    if(/password|passcode|otp|token|secret|private.?key|cookie/i.test(k))continue;
+    if(v===undefined||v===null)continue;
+    safe[String(k).slice(0,60)]=typeof v==='boolean'||typeof v==='number'?v:String(v).slice(0,200);
+  }
+  const row={
+    id:uid('evt-'),
+    event:String(event||'security.event').slice(0,100),
+    actorId:String(actorId||'').slice(0,160),
+    actorRole:String(actorRole||'').slice(0,40),
+    at:nowIso(),
+    ipHash:crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(clientIp(req)).digest('hex'),
+    userAgentHash:crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(String(req.headers['user-agent']||'')).digest('hex'),
+    details:safe
+  };
+  row.integrity=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update(JSON.stringify(row)).digest('hex');
+  await set(SECURITY_ROOT+'/audit/'+row.id,row);
+}
 function hashSessionToken(token){return crypto.createHash('sha256').update(String(token||'')).digest('hex');}
 function sessionCookieToken(){return crypto.randomBytes(32).toString('base64url');}
 async function createServerSession(record){
@@ -453,7 +477,7 @@ const routeV2=require('./v2-router')({
   get,set,remove,multiUpdate,db,useMemDb,crypto,CFG,nowIso,uid,encodeFirebaseKey,cleanEmail,EMAIL_RE,MOBILE_RE,
   hashPassword,passwordMatches,sendEmail,emailShell,rateLimit,validateCsrf,createCsrfToken,setCsrfCookie,
   verifyAdminSession,verifyUserSession,createAdminSession,createUserSession,revokeServerSession,setSessionCookie,clearSessionCookie,
-  body,errorStatus,publicUser,send,escapeHtml,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp,createPasswordResetChallenge,invalidatePasswordResetChallenge,consumePasswordResetChallenge
+  body,errorStatus,publicUser,send,escapeHtml,ADMIN_OTP_TTL_MS,hashAdminOtp,update,AUTH_SESSION_SECRET,issueAdminOtp,consumeAdminOtp,invalidateAdminOtp,createPasswordResetChallenge,invalidatePasswordResetChallenge,consumePasswordResetChallenge,auditEvent
 });
 async function route(req,res){return routeV2(req,res);}
 
