@@ -58,7 +58,7 @@ jobs:
           assert "attemptId:crypto.randomBytes(18)" not in server
           assert "adminOtpState={hash:" not in server
           assert "createAdminSession(uidValue){const payload=" not in server
-          assert "function rateLimit(req,key,limit,windowMs,identity='')" not in server
+          assert "async function rateLimit(req,key,limit,windowMs,identity='')" in server
           assert "P.resets+'/'+u.uid" not in router
           assert "await revokeServerSession" in router
           assert "await verifyAdminSession" in router
