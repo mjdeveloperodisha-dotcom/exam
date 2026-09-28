@@ -50,7 +50,7 @@ jobs:
           assert "payment-settings" not in server.lower()
           for marker in ["getCsrfToken()","X-CSRF-Token","/start',{}"]:
               assert marker in student, f"missing student security marker: {marker}"
-          for marker in ["getCsrfToken()","X-CSRF-Token"]:
+          for marker in ["token()","X-CSRF-Token","X-CEM-Portal"]:
               assert marker in admin, f"missing admin security marker: {marker}"
           for marker in ["X-CEM-Portal","X-CSRF-Token","/api/institute/users","/api/modules"]:
               assert marker in institute, f"missing institute security marker: {marker}"
