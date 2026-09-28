@@ -288,7 +288,7 @@ async function issueAdminOtp({email,hash,expiresAt,requestTimestamp}){
   const now=Number(requestTimestamp)||Date.now(),state={email,hash,expiry:Number(expiresAt),attempts:0,consumed:false,requestTimestamp:now,createdAt:new Date(now).toISOString(),consumedAt:null};
   const tx=await ref.transaction(cur=>{
     const current=cur&&typeof cur==='object'?cur:null;
-    if(current&&!current.consumed&&Number(current.expiry)>now&&now-Number(current.requestTimestamp||0)<60000)return current;
+    if(current&&now-Number(current.requestTimestamp||0)<60000)return current;
     return state;
   },undefined,false);
   const saved=tx.snapshot.val()||{};
@@ -303,7 +303,7 @@ async function invalidateAdminOtp(){
   await set(SECURITY_OTP_PATH,{hash:'',expiry:0,attempts:0,consumed:true,requestTimestamp:Date.now(),createdAt:nowIso(),consumedAt:nowIso(),invalidated:true});
 }
 async function consumeAdminOtp(otp){
-  const now=Date.now(),attemptHash=hashAdminOtp(otp);
+  const now=Date.now(),attemptHash=hashAdminOtp(otp),verificationId=crypto.randomBytes(16).toString('hex');
   if(!db||useMemDb){
     if(process.env.NODE_ENV==='production')throw Object.assign(new Error('Secure OTP storage is unavailable.'),{status:503});
     return {ok:false,reason:'unavailable'};
@@ -313,11 +313,11 @@ async function consumeAdminOtp(otp){
     const current=cur&&typeof cur==='object'?{...cur}:null;
     if(!current||current.consumed||!current.hash||Number(current.expiry)<=now||Number(current.attempts||0)>=5)return current;
     const attempts=Number(current.attempts||0)+1;
-    if(attemptHash===String(current.hash))return {...current,attempts,consumed:true,verified:true,consumedAt:new Date(now).toISOString()};
-    return {...current,attempts,consumed:attempts>=5,verified:false,consumedAt:attempts>=5?new Date(now).toISOString():current.consumedAt||null};
+    if(attemptHash===String(current.hash))return {...current,attempts,consumed:true,verificationId,consumedAt:new Date(now).toISOString()};
+    return {...current,attempts,consumed:attempts>=5,verificationId:null,consumedAt:attempts>=5?new Date(now).toISOString():current.consumedAt||null};
   },undefined,false);
   const saved=tx.snapshot.val()||{};
-  if(saved.verified===true&&saved.consumed===true)return {ok:true};
+  if(saved.verificationId===verificationId&&saved.consumed===true)return {ok:true};
   if(!saved.hash||saved.consumed||Number(saved.expiry)<=now||Number(saved.attempts||0)>=5)return {ok:false,reason:'locked'};
   return {ok:false,reason:'incorrect',attempts:Number(saved.attempts||0)};
 }
