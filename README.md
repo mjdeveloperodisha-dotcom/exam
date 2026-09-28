@@ -57,7 +57,7 @@ Authentication state is server-controlled. Production does not trust client-side
 - Main Admin OTP stores only the HMAC hash, expiry, attempt count, consumed state and server request timestamp; the plaintext OTP is never persisted
 - Main Admin OTP verification is atomic and single-use, including concurrent-request protection
 - Password-reset OTP state is also server-side, hashed, short-lived, attempt-limited and atomic single-use
-- Production refuses to start without Firebase-backed storage and a strong `AUTH_SESSION_SECRET`
+- Production refuses to start without Firebase-backed storage, strong separate `AUTH_SESSION_SECRET`/`ADMIN_OTP_SECRET` values, and explicit `TRUST_PROXY=true`
 - Firebase Realtime Database rules remain deny-by-default; browser clients do not receive Firebase Admin credentials
 
 ## Examination security
@@ -101,6 +101,7 @@ Open:
 Copy .env.example to .env and configure:
 
 - PORT=4300
+- TRUST_PROXY=true when deployed behind the trusted TLS reverse proxy
 - AUTH_SESSION_SECRET
 - ADMIN_OTP_SECRET
 - Firebase Realtime Database server credentials
