@@ -1,78 +1,94 @@
 # Competitive Exam Master
 
-Production-oriented online competitive-exam platform.
+Institute-scoped competitive examination platform for the test2 architecture.
 
-Architecture
-- Node.js backend in server.js
-- Firebase Realtime Database is the server-side data store.
-- Firebase Authentication is not used.
-- Student/teacher/admin authentication is handled by the application.
-- Passwords are stored only as salted scrypt hashes.
-- Sessions use secure HttpOnly cookies.
-- Gmail API sends Admin OTP, password-reset OTP and application emails.
-- Razorpay Test Mode is integrated directly into the main app server.
-- Manual UPI payment supports UPI ID + uploaded QR code + Admin verification.
-- Exam submissions use per-attempt records and atomic one-attempt locks.
-- Student post-exam ratings and feedback are stored server-side.
-- RTDB rules are locked down because the backend uses the Firebase Admin SDK.
+## Portal structure
 
-Requirements
-- Node.js 22+
-- Firebase project with Realtime Database enabled
-- Firebase Admin service-account credentials
-- Gmail API OAuth credentials with a refresh token and send permission
-- Razorpay Test Mode credentials for online payment testing
+- **Main Admin** — /admin
+  - Secure email + OTP login
+  - Create institutes
+  - Set institute User ID/password
+  - Remove institutes
+  - No student, teacher, exam, module, settings or payment management
 
-Firebase Authentication does not need to be enabled for this application.
+- **Institute Admin** — /institute
+  - Secure institute User ID/password login
+  - Approve, block/unblock and delete students
+  - Approve, block/unblock and delete teachers
+  - Add/remove exam modules
+  - Review/delete test series
+  - Change test attempt policy
+  - Manage institute branding/settings
+  - Institute-scoped administration only
 
-Setup
+- **Student / Teacher** — /student
+  - Registration requires selecting an active institute
+  - Student and teacher accounts are stored separately
+  - Teachers require Institute Admin approval
+  - Teachers create test series for their own institute
+  - Students see only published tests belonging to their institute
+
+## New Firebase RTDB namespace
+
+The new project uses **cem2/...** and does not delete or overwrite the previous project's Firebase paths.
+
+- cem2/institutes
+- cem2/students
+- cem2/teachers
+- cem2/modules
+- cem2/tests
+- cem2/examAttempts
+- cem2/attemptLocks
+- cem2/submissions
+- cem2/scoreIndex
+- cem2/ratings
+- cem2/passwordResets
+- cem2/settings
+
+## Examination security
+
+- Server-side authentication and signed HMAC sessions
+- CSRF token + same-origin validation
+- Rate limiting
+- Secure/HttpOnly/SameSite cookies
+- Security headers and HSTS in HTTPS production
+- Server-generated exam attempt IDs
+- Server-side start/expiry timestamps
+- Server-side answer validation and scoring
+- Server-side result/rank/percentile calculation
+- One-attempt transaction locks when enabled
+- Institute ID checks on tests, attempts and submissions
+- Teachers can modify only their own test series
+- Institute Admin can manage only their institute
+- No answer key is sent to students before submission
+
+## Payments
+
+Premium subscriptions, Razorpay, UPI payment flows, orders and payment settings have been removed from the new project API and UI.
+
+## Running locally
+
+Default port: **4300**
+
+```bash
 npm install
-Copy-Item .env.example .env
 npm start
+```
 
-Open http://localhost:3000/student and http://localhost:3000/admin.
+Open:
 
-For production, configure a strong AUTH_SESSION_SECRET (32+ random characters) and keep all service-account, Gmail and Razorpay secrets outside Git.
+- http://localhost:4300/student
+- http://localhost:4300/admin
+- http://localhost:4300/institute
 
-Authentication
-Student and teacher registration is handled by the backend and stored in RTDB. Login checks the password hash and creates an HttpOnly session cookie. Teachers remain pending until an Admin approves them.
-Admin login uses a 6-digit OTP delivered through Gmail API. OTPs expire and are rate-limited.
-Forgot-password uses a Gmail OTP. The reset code is short-lived and rate-limited.
+## Environment
 
-Payments
-Razorpay is integrated into the main server.js; the separate payment-server directory has been removed.
-Online flow: server creates the order using the server-side plan price, Razorpay Checkout handles payment, the server verifies the signature and then checks order ID, amount, currency and capture status before activating Premium.
-Razorpay webhook processing provides server-to-server confirmation and duplicate-event protection.
-Use Razorpay Test Mode while developing. The Key ID must start with rzp_test_. Configure the webhook at https://YOUR-PUBLIC-SERVER/api/webhook.
-Razorpay supports QR-based UPI payment flows; this project also supports an Admin-uploaded static UPI QR for manual payment: https://razorpay.com/qr-code/.
+Copy .env.example to .env and configure:
 
-Manual UPI
-Admin → Premium Subscriptions supports UPI ID, payee name, payment note and UPI QR upload/preview/remove.
-Students can scan the QR, open a UPI app using the UPI URI, then submit the UTR/transaction ID. Admin approval activates the subscription. A submitted UTR never automatically grants Premium.
+- PORT=4300
+- AUTH_SESSION_SECRET
+- ADMIN_OTP_SECRET
+- Firebase Realtime Database server credentials
+- Gmail API credentials for OTP/password-reset/account emails
 
-Exam submission reliability
-Submissions are stored as individual records at submissions/<attempt-id> instead of reading and rewriting the complete submissions collection.
-For one-attempt tests, an atomic lock is maintained at attemptLocks/<test-id>/<user-id>. This prevents concurrent duplicate submissions while allowing a failed network request to safely retry the same attempt.
-Firebase Realtime Database transactions are designed for concurrent writes that could otherwise overwrite each other.
-
-Ratings
-After completing a test, students can submit one 1–5 star rating and optional feedback. A student can update their own rating but cannot create multiple ratings for the same test.
-Admins can review ratings and feedback from the Admin panel.
-
-Security
-- Firebase RTDB is not exposed directly to the browser.
-- database.rules.json denies direct reads and writes.
-- Passwords are never stored in plaintext.
-- Auth sessions use HttpOnly, Secure and SameSite cookies.
-- Login and OTP endpoints are rate-limited.
-- Razorpay secrets remain server-side.
-- Razorpay signatures are verified with HMAC.
-- Payment amounts are checked against the saved server-side order.
-- Webhook events are deduplicated.
-- Protected APIs enforce user roles server-side.
-- User-supplied HTML is escaped before being rendered into the UI.
-- Security response headers are added by the backend.
-
-Important production note
-No web application can honestly be called unhackable. Production deployment still requires HTTPS, a strong unique AUTH_SESSION_SECRET, protection of Firebase/Gmail/Razorpay credentials, a reverse proxy/WAF such as Cloudflare, dependency updates, monitoring and backups.
-Never commit .env, service-account JSON, OAuth refresh tokens, or payment secrets.
+Firebase access remains server-side; the frontend does not receive Firebase Admin credentials.
