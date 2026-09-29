@@ -40,7 +40,13 @@ const CFG = {
     name: process.env.ADMIN_NAME || 'Administrator'
   },
 };
-
+router.get('health',(req, res) => {
+  successResponse(res, {
+    status: 'ok',
+    timestamp: new date().toISOString(),
+    uptime: process.uptime()
+  });
+});
 let db = null;
 let useMemDb = false;
 
