@@ -454,8 +454,8 @@ function serveStatic(req,res) {
   const url=new URL(req.url,'http://localhost');
   let p;
   if(url.pathname==='/' || url.pathname==='/student') p=path.join(__dirname,'frontend','CompetitiveExamMaster-student.html');
-  else if(url.pathname==='/admin') p=path.join(__dirname,'frontend','CompetitiveExamMaster-admin.html');
-  else if(url.pathname==='/institute') p=path.join(__dirname,'frontend','CompetitiveExamMaster-institute.html');
+  else if(url.pathname==='/sid/admin') p=path.join(__dirname,'frontend','CompetitiveExamMaster-admin.html');
+  else if(url.pathname==='/buy/institute') p=path.join(__dirname,'frontend','CompetitiveExamMaster-institute.html');
   else if(url.pathname.startsWith('/frontend/')) p=path.join(__dirname,url.pathname);
   else return false;
   if(!fs.existsSync(p)) return false;
