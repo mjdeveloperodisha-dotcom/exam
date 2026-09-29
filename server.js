@@ -430,7 +430,80 @@ function csrfCookieBase(req){return 'Path=/; '+(isHttps(req)?'Secure; ':'')+'Sam
 function createCsrfToken(){const random=crypto.randomBytes(32).toString('base64url');const sig=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+random).digest('base64url');return random+'.'+sig;}
 function setCsrfCookie(res,token){res.setHeader('Set-Cookie',(res.getHeader('Set-Cookie')||[]).concat(['cem_csrf='+encodeURIComponent(token)+'; '+csrfCookieBase(res.req)]));}
 function validCsrfToken(token){const parts=String(token||'').split('.');if(parts.length!==2||!/^[A-Za-z0-9_-]{32,100}$/.test(parts[0]))return false;const expected=crypto.createHmac('sha256',AUTH_SESSION_SECRET).update('csrf|'+parts[0]).digest('base64url');return parts[1].length===expected.length&&crypto.timingSafeEqual(Buffer.from(parts[1]),Buffer.from(expected));}
-function validateCsrf(req){const origin=String(req.headers.origin||'').trim();const referer=String(req.headers.referer||'').trim();const proto=CFG.trustProxy?String(req.headers['x-forwarded-proto']||'').split(',')[0].trim():(isHttps(req)?'https':'http');const host=(CFG.trustProxy?String(req.headers['x-forwarded-host']||''):String(req.headers.host||'')).split(',')[0].trim();const target=proto+'://'+host;const source=origin|| (referer?(()=>{try{return new URL(referer).origin}catch(_){return ''}})():'');if(source && source!==target)throw Object.assign(new Error('Cross-site request blocked.'),{status:403});if(String(req.headers['sec-fetch-site']||'').toLowerCase()==='cross-site')throw Object.assign(new Error('Cross-site request blocked.'),{status:403});const cookies=parseCookies(req),cookie=decodeURIComponent(String(cookies.cem_csrf||'')),header=String(req.headers['x-csrf-token']||'');if(!cookie||!header||cookie!==header||!validCsrfToken(header))throw Object.assign(new Error('CSRF validation failed. Refresh the page and try again.'),{status:403});}
+function function validateCsrf(req) {
+  const origin = String(req.headers.origin || '').trim();
+  const referer = String(req.headers.referer || '').trim();
+
+  const forwardedProto = String(
+    req.headers['x-forwarded-proto'] || ''
+  ).split(',')[0].trim().toLowerCase();
+
+  const forwardedHost = String(
+    req.headers['x-forwarded-host'] || ''
+  ).split(',')[0].trim().toLowerCase();
+
+  const protocol = CFG.trustProxy
+    ? forwardedProto || 'https'
+    : (req.socket.encrypted ? 'https' : 'http');
+
+  const host = CFG.trustProxy
+    ? forwardedHost || String(req.headers.host || '').split(',')[0].trim().toLowerCase()
+    : String(req.headers.host || '').split(',')[0].trim().toLowerCase();
+
+  const target = `${protocol}://${host}`;
+
+  let source = '';
+
+  if (origin && origin !== 'null') {
+    source = origin.replace(/\/+$/, '').toLowerCase();
+  } else if (referer) {
+    try {
+      source = new URL(referer).origin.toLowerCase();
+    } catch (_) {
+      source = '';
+    }
+  }
+
+  if (source && source !== target) {
+    console.error('[CSRF] Origin mismatch:', {
+      source,
+      target,
+      forwardedProto,
+      forwardedHost,
+      host
+    });
+
+    throw Object.assign(
+      new Error('Cross-site request blocked.'),
+      { status: 403 }
+    );
+  }
+
+  if (
+    String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site'
+  ) {
+    throw Object.assign(
+      new Error('Cross-site request blocked.'),
+      { status: 403 }
+    );
+  }
+
+  const cookies = parseCookies(req);
+  const cookie = decodeURIComponent(String(cookies.cem_csrf || ''));
+  const header = String(req.headers['x-csrf-token'] || '');
+
+  if (
+    !cookie ||
+    !header ||
+    cookie !== header ||
+    !validCsrfToken(header)
+  ) {
+    throw Object.assign(
+      new Error('CSRF validation failed. Refresh the page and try again.'),
+      { status: 403 }
+    );
+  }
+}
 function securityHeaders(req){const h={'X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=(), payment=()','Cross-Origin-Opener-Policy':'same-origin','Cross-Origin-Resource-Policy':'same-origin','X-DNS-Prefetch-Control':'off','X-Permitted-Cross-Domain-Policies':'none','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"};if(isHttps(req))h['Strict-Transport-Security']='max-age=31536000; includeSubDomains';return h;}
 function send(res,status,data){const h=securityHeaders(res.req);Object.assign(h,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Access-Control-Allow-Origin':'null','Access-Control-Allow-Headers':'Content-Type, Authorization, X-CEM-Portal, X-CSRF-Token','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS'});res.writeHead(status,h);res.end(JSON.stringify(data));}
 
