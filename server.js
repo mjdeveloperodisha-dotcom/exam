@@ -40,9 +40,6 @@ const CFG = {
     name: process.env.ADMIN_NAME || 'Administrator'
   },
 };
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok' });
-});
 let db = null;
 let useMemDb = false;
 
@@ -487,9 +484,13 @@ const server=http.createServer(async(req,res)=>{
   server.headersTimeout=65000; server.requestTimeout=120000; server.keepAliveTimeout=5000;
   try {
     if(process.env.NODE_ENV==='production'&&!isHttps(req)) return send(res,400,{error:'HTTPS is required.'});
-    if(req.url.startsWith('/api/')) return await route(req,res);
-    if(serveStatic(req,res)) return;
-    send(res,404,{error:'Not found.'});
+    if (req.url === '/health') {
+  return send(res, 200, { status: 'ok' });
+}
+
+if (req.url.startsWith('/api/')) return await route(req, res);
+if (serveStatic(req, res)) return;
+send(res, 404, { error: 'Not found.' });
   } catch(e) {
     console.error(e);
     send(res,errorStatus(e),{error:e.message||'Server error.'});
